@@ -1,0 +1,8 @@
+<menu>
+    <Services>
+        <KixDNS VisibleName="KixDNS" cssClass="fa fa-database fa-fw">
+            <Settings VisibleName="General Settings" order="10" url="/ui/kixdns"/>
+            <Log VisibleName="Log File" order="20" url="/ui/diagnostics/log/core/kixdns"/>
+        </KixDNS>
+    </Services>
+</menu>

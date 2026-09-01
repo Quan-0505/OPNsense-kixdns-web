@@ -1,0 +1,18 @@
+<acl>
+    <page-services-kixdns>
+        <name>Services: KixDNS</name>
+        <description>Allow access to the KixDNS settings and pipeline editor</description>
+        <patterns>
+            <pattern>ui/kixdns/*</pattern>
+            <pattern>api/kixdns/*</pattern>
+        </patterns>
+    </page-services-kixdns>
+    <page-services-kixdns-log>
+        <name>Services: KixDNS: Log File</name>
+        <description>Allow access to the KixDNS log file</description>
+        <patterns>
+            <pattern>ui/diagnostics/log/core/kixdns/*</pattern>
+            <pattern>api/diagnostics/log/core/kixdns/*</pattern>
+        </patterns>
+    </page-services-kixdns-log>
+</acl>

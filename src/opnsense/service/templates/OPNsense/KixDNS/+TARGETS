@@ -1,0 +1,2 @@
+pipeline.json:/usr/local/etc/kixdns/pipeline.json
+kixdns:/etc/rc.conf.d/kixdns

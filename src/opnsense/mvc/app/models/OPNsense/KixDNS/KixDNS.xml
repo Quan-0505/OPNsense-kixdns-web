@@ -1,0 +1,45 @@
+<model>
+    <mount>//OPNsense/kixdns</mount>
+    <version>1.0.0</version>
+    <description>KixDNS Configuration</description>
+    <items>
+        <general>
+            <enabled type="BooleanField">
+                <default>0</default>
+            </enabled>
+            <listener_label type="TextField">
+                <default>default</default>
+                <Required>Y</Required>
+                <!-- ends up in /etc/rc.conf.d/kixdns and on the daemon command
+                     line, so keep it strictly shell safe -->
+                <Mask>/^([0-9a-zA-Z._\-]){1,64}$/u</Mask>
+                <ValidationMessage>Only letters, digits, dot, dash and underscore are allowed (max 64 characters).</ValidationMessage>
+            </listener_label>
+            <debug type="BooleanField">
+                <default>0</default>
+            </debug>
+            <log_level type="OptionField">
+                <default>info</default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <trace>Trace</trace>
+                    <debug>Debug</debug>
+                    <info>Info</info>
+                    <warn>Warning</warn>
+                    <error>Error</error>
+                </OptionValues>
+            </log_level>
+            <udp_workers type="IntegerField">
+                <default>0</default>
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>256</MaximumValue>
+                <ValidationMessage>Please provide a value between 0 (auto) and 256.</ValidationMessage>
+            </udp_workers>
+            <!-- Full KixDNS pipeline JSON configuration, managed by the Pipeline Editor -->
+            <config_json type="TextField">
+                <Required>N</Required>
+                <default></default>
+            </config_json>
+        </general>
+    </items>
+</model>

@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if [ -f /usr/local/etc/rc.configure_plugins ]; then echo "Reloading plugin configuration"; /usr/local/etc/rc.configure_plugins POST_DEINSTALL; fi
+if [ -f /usr/local/etc/rc.d/configd ]; then /usr/local/etc/rc.d/configd restart; fi
+
+rm -f /etc/rc.conf.d/kixdns
+
+exit 0

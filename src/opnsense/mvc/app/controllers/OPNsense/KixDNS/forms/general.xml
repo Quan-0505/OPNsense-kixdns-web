@@ -1,0 +1,33 @@
+<form>
+    <field>
+        <id>kixdns.general.enabled</id>
+        <label>Enable KixDNS</label>
+        <type>checkbox</type>
+        <help>Enable the KixDNS service. The listen addresses themselves are part of the pipeline configuration (Pipeline Editor tab, default 0.0.0.0:5353).</help>
+    </field>
+    <field>
+        <id>kixdns.general.listener_label</id>
+        <label>Listener Label</label>
+        <type>text</type>
+        <help>Listener instance label, matched by pipeline selectors of type "listener_label".</help>
+    </field>
+    <field>
+        <id>kixdns.general.log_level</id>
+        <label>Log Level</label>
+        <type>dropdown</type>
+        <help>Logging verbosity (passed to the process as RUST_LOG). Output is visible under Services - KixDNS - Log File.</help>
+    </field>
+    <field>
+        <id>kixdns.general.debug</id>
+        <label>Debug Logging</label>
+        <type>checkbox</type>
+        <help>Start the process with --debug, which also forces the log level to debug.</help>
+    </field>
+    <field>
+        <id>kixdns.general.udp_workers</id>
+        <label>UDP Workers</label>
+        <type>text</type>
+        <help>Number of UDP worker tasks, 0 lets KixDNS use the CPU core count.</help>
+        <advanced>true</advanced>
+    </field>
+</form>

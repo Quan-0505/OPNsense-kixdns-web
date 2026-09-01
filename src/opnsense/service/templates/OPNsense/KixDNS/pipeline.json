@@ -1,0 +1,36 @@
+{#
+ # KixDNS pipeline configuration.
+ #
+ # Emits the config_json field maintained by the Pipeline Editor verbatim,
+ # or a minimal working default when nothing has been saved yet.
+ # Target: /usr/local/etc/kixdns/pipeline.json
+ #}
+{% if helpers.exists('OPNsense.kixdns.general.config_json') and OPNsense.kixdns.general.config_json|default('') != '' %}
+{{ OPNsense.kixdns.general.config_json }}
+{% else %}
+{
+    "version": "1.0",
+    "settings": {
+        "bind_udp": "0.0.0.0:5353",
+        "bind_tcp": "0.0.0.0:5353",
+        "default_upstream": "1.1.1.1:53",
+        "upstream_timeout_ms": 2000,
+        "min_ttl": 0,
+        "response_jump_limit": 10,
+        "udp_pool_size": 0
+    },
+    "pipeline_select": [],
+    "pipelines": [
+        {
+            "id": "main",
+            "rules": [
+                {
+                    "name": "default_forward",
+                    "matchers": [{ "type": "any" }],
+                    "actions": [{ "type": "forward", "upstream": null }]
+                }
+            ]
+        }
+    ]
+}
+{% endif %}

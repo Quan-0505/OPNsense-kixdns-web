@@ -1,0 +1,256 @@
+name: Build OPNsense Plugin
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      kixdns_ref:
+        description: "kixdns git ref to build (branch, tag or commit)"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_VERSION: "0.2"
+  PLUGIN_NAME: "kixdns-community"
+  PKG_NAME: "os-kixdns-community"
+  KIXDNS_REF: ${{ github.event.inputs.kixdns_ref || 'main' }}
+
+jobs:
+  build-binary:
+    name: Cross build kixdns for FreeBSD amd64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolve kixdns commit
+        id: kixdns-sha
+        run: |
+          SHA=$(git ls-remote https://github.com/olicesx/kixdns "${KIXDNS_REF}" | awk '{print $1}' | head -n1)
+          if [ -z "$SHA" ]; then SHA=$(git ls-remote https://github.com/olicesx/kixdns HEAD | awk '{print $1}'); fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Building kixdns $SHA"
+
+      - name: Cache kixdns binary
+        id: cache-kixdns-bin
+        uses: actions/cache@v4
+        with:
+          path: kixdns-bin/
+          key: kixdns-freebsd-amd64-${{ steps.kixdns-sha.outputs.sha }}
+
+      - name: Checkout kixdns
+        if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: olicesx/kixdns
+          ref: ${{ steps.kixdns-sha.outputs.sha }}
+          path: kixdns-src
+
+      - name: Install Rust
+        if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-${{ hashFiles('kixdns-src/Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Install cross
+        if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
+        run: |
+          command -v cross >/dev/null 2>&1 || cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build (cross, x86_64-unknown-freebsd)
+        if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
+        working-directory: kixdns-src
+        run: |
+          cross build --release --locked --target x86_64-unknown-freebsd
+          mkdir -p ../kixdns-bin
+          cp target/x86_64-unknown-freebsd/release/kixdns ../kixdns-bin/kixdns
+
+      - name: Verify binary is a FreeBSD executable
+        run: |
+          file kixdns-bin/kixdns
+          file kixdns-bin/kixdns | grep -qi freebsd
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: kixdns-freebsd-amd64
+          path: kixdns-bin/kixdns
+          compression-level: 0
+
+  package:
+    name: Package ${{ matrix.abi }}
+    needs: build-binary
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # OPNsense 25.7 / 26.1 run on FreeBSD 14
+          - abi: "FreeBSD:14:amd64"
+            arch: "freebsd:14:x86:64"
+            opnsense_abi: "26.1"
+          # OPNsense 26.7 and newer run on FreeBSD 15
+          - abi: "FreeBSD:15:amd64"
+            arch: "freebsd:15:x86:64"
+            opnsense_abi: "26.7"
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: kixdns-freebsd-amd64
+          path: kixdns-bin
+
+      - name: Stage package root
+        run: |
+          set -eu
+          rm -rf stage
+          # everything under src/ maps to /usr/local/ (OPNsense LOCALBASE)
+          mkdir -p stage/usr/local
+          cp -a src/. stage/usr/local/
+
+          install -m 0755 -d stage/usr/local/bin
+          install -m 0755 kixdns-bin/kixdns stage/usr/local/bin/kixdns
+          chmod 0755 stage/usr/local/etc/rc.d/kixdns
+
+          # plugin version marker, same content the official framework installs
+          install -m 0755 -d stage/usr/local/opnsense/version
+          cat > "stage/usr/local/opnsense/version/${PLUGIN_NAME}" <<EOF
+          {
+              "product_abi": "${{ matrix.opnsense_abi }}",
+              "product_arch": "amd64",
+              "product_conflicts": "",
+              "product_email": "troubadour-hell@users.noreply.github.com",
+              "product_hash": "${GITHUB_SHA}",
+              "product_id": "${PKG_NAME}",
+              "product_name": "${PLUGIN_NAME}",
+              "product_tier": "3",
+              "product_version": "${PLUGIN_VERSION}",
+              "product_website": "https://github.com/troubadour-hell/opn-kixdns"
+          }
+          EOF
+
+          find stage -type d -exec chmod 0755 {} +
+          find stage -type f -exec chmod 0644 {} +
+          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns
+          find stage -type f | sort
+
+      - name: Build +MANIFEST
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+
+          root = "stage"
+          files, flatsize = {}, 0
+          for base, _dirs, names in os.walk(root):
+              for name in names:
+                  path = os.path.join(base, name)
+                  rel = "/" + os.path.relpath(path, root).replace(os.sep, "/")
+                  data = open(path, "rb").read()
+                  flatsize += len(data)
+                  # pkg checksum format, verified against a real os-* package:
+                  # "/usr/local/...": "1$<sha256>"
+                  files[rel] = "1$" + hashlib.sha256(data).hexdigest()
+
+          scripts = {}
+          for key, fname in (
+              ("pre-deinstall", "+PRE_DEINSTALL"),
+              ("post-install", "+POST_INSTALL"),
+              ("post-deinstall", "+POST_DEINSTALL"),
+          ):
+              if os.path.exists(fname):
+                  with open(fname) as fh:
+                      body = fh.read().strip()
+                  if body:
+                      scripts[key] = body
+
+          version_file = os.path.join(
+              root, "usr/local/opnsense/version", os.environ["PLUGIN_NAME"]
+          )
+          with open(version_file) as fh:
+              annotations = json.load(fh)
+
+          manifest = {
+              "name": os.environ["PKG_NAME"],
+              "version": os.environ["PLUGIN_VERSION"],
+              "origin": "opnsense/" + os.environ["PKG_NAME"],
+              "comment": "KixDNS High Performance DNS Server",
+              "maintainer": "troubadour-hell@users.noreply.github.com",
+              "www": "https://github.com/troubadour-hell/opn-kixdns",
+              "abi": os.environ["PKG_ABI"],
+              "arch": os.environ["PKG_ARCH"],
+              "prefix": "/usr/local",
+              "flatsize": flatsize,
+              "licenselogic": "single",
+              "licenses": ["GPLv3"],
+              "desc": (
+                  "KixDNS is a high performance asynchronous DNS server written in Rust,\n"
+                  "with pipeline based routing and hot reloadable rules.\n\n"
+                  "WWW: https://github.com/olicesx/kixdns"
+              ),
+              "categories": ["dns"],
+              "annotations": annotations,
+          }
+
+          compact = dict(manifest)
+          manifest["files"] = files
+          manifest["scripts"] = scripts
+
+          with open("+COMPACT_MANIFEST", "w") as fh:
+              json.dump(compact, fh, separators=(",", ":"))
+          with open("+MANIFEST", "w") as fh:
+              json.dump(manifest, fh, separators=(",", ":"))
+          print("files:", len(files), "flatsize:", flatsize, "scripts:", sorted(scripts))
+          PY
+        env:
+          PKG_ABI: ${{ matrix.abi }}
+          PKG_ARCH: ${{ matrix.arch }}
+
+      - name: Create .pkg
+        run: |
+          set -eu
+          SUFFIX=$(echo "${{ matrix.abi }}" | tr ':' '_')
+          OUT="${PKG_NAME}-${PLUGIN_VERSION}-${SUFFIX}.pkg"
+          # metadata members first, payload paths absolute - same layout as
+          # packages produced by "pkg create" on FreeBSD
+          ( echo "+COMPACT_MANIFEST"
+            echo "+MANIFEST"
+            cd stage && find . -type f | sed 's|^\./|stage/|' | sort ) > filelist.txt
+          tar --owner=0 --group=0 --numeric-owner \
+              --transform='s|^stage/|/|' \
+              -Jcf "${OUT}" -T filelist.txt
+          ls -lh "${OUT}"
+          echo "--- archive head ---"
+          tar -tf "${OUT}" | head -n 10
+          echo "PKG_FILE=${OUT}" >> "$GITHUB_ENV"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}-${{ env.PLUGIN_VERSION }}-${{ matrix.opnsense_abi }}
+          path: ${{ env.PKG_FILE }}
+          compression-level: 0
+
+      # Publishing a release makes installation a single command on a box
+      # without SSH access:
+      #   pkg add https://github.com/<user>/opn-kixdns/releases/download/<tag>/<file>.pkg
+      - name: Attach package to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PKG_FILE }}
+          fail_on_unmatched_files: true

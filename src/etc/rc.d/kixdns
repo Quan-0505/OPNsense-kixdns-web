@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# PROVIDE: kixdns
+# REQUIRE: SERVERS
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=kixdns
+rcvar=kixdns_enable
+
+load_rc_config $name
+
+: ${kixdns_enable:="NO"}
+: ${kixdns_config:="/usr/local/etc/kixdns/pipeline.json"}
+: ${kixdns_listener_label:="default"}
+: ${kixdns_debug:="NO"}
+: ${kixdns_log_level:="info"}
+: ${kixdns_udp_workers:="0"}
+
+pidfile="/var/run/${name}.pid"
+command="/usr/sbin/daemon"
+required_files="${kixdns_config}"
+
+# NOTE: do NOT name this variable kixdns_program - FreeBSD rc.subr treats
+#       ${name}_program (i.e. kixdns_program) as an override for the whole
+#       command (see _rc_namevarlist in rc.subr), which silently replaces
+#       ${command} and breaks daemon option parsing.
+kixdns_bin="/usr/local/bin/kixdns"
+
+# NOTE: kixdns is a clap subcommand CLI: the DNS server lives behind "run".
+#       Passing --config without "run" makes clap exit with a usage error.
+kixdns_subcmd="run --config ${kixdns_config} --listener-label ${kixdns_listener_label}"
+
+if checkyesno kixdns_debug; then
+	kixdns_subcmd="${kixdns_subcmd} --debug"
+	kixdns_log_level="debug"
+fi
+
+case "${kixdns_udp_workers}" in
+[1-9]*)
+	kixdns_subcmd="${kixdns_subcmd} --udp-workers ${kixdns_udp_workers}"
+	;;
+esac
+
+# kixdns honours RUST_LOG (tracing EnvFilter) and it takes precedence over --debug.
+export RUST_LOG="${kixdns_log_level}"
+
+# -f  detach and close our own stdio (configd must not wait on the pipe)
+# -S  forward child stdout/stderr to syslog, -T tags it as "kixdns"
+#     (see /usr/local/opnsense/service/templates/OPNsense/Syslog/local/kixdns.conf)
+# -P  keep the supervisor pid in pidfile, so rc.subr check_pidfile matches
+#     ${command} (/usr/sbin/daemon) and status/stop behave normally
+command_args="-f -S -l daemon -T ${name} -P ${pidfile} ${kixdns_bin} ${kixdns_subcmd}"
+
+run_rc_command "$1"

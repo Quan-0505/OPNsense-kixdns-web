@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if [ -x /usr/local/etc/rc.d/kixdns ]; then
+	/usr/local/etc/rc.d/kixdns onestop > /dev/null 2>&1 || true
+fi
+
+exit 0

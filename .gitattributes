@@ -1,0 +1,4 @@
+# All files in this repository are consumed by /bin/sh, python or editors on
+# FreeBSD / Linux - force LF line endings everywhere to keep the rc.d script
+# and pkg install scripts byte-identical to what was verified on OPNsense.
+* text eol=lf

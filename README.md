@@ -19,8 +19,8 @@ OPNsense 插件，把 [KixDNS](https://github.com/olicesx/kixdns)（Rust 编写�
 
 | OPNsense | pkg ABI | 需要下载的文件 |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.2-FreeBSD_14_amd64.pkg` |
-| 26.7 及以后 | `FreeBSD:15:amd64` | `os-kixdns-community-0.2-FreeBSD_15_amd64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.3-FreeBSD_14_amd64.pkg` |
+| 26.7 及以后 | `FreeBSD:15:amd64` | `os-kixdns-community-0.3-FreeBSD_15_amd64.pkg` |
 
 不确定的话，在 OPNsense 里执行 `pkg config abi` 看输出。
 
@@ -33,11 +33,11 @@ OPNsense 插件，把 [KixDNS](https://github.com/olicesx/kixdns)（Rust 编写�
 pkg delete -y os-kixdns-community || true
 
 # 打 tag 触发的构建会自动发 Release，可以直接用 URL 安装
-pkg add https://github.com/troubadour-hell/opn-kixdns/releases/download/v0.2/os-kixdns-community-0.2-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/opn-kixdns/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_14_amd64.pkg
 ```
 
 如果只跑了 Actions 没发 Release，就到 Actions → 对应 run → Artifacts 下载 zip，解压出 `.pkg`，
-用同一页面的 “Upload File” 传到 `/tmp/`，然后 `pkg add /tmp/os-kixdns-community-0.2-FreeBSD_14_amd64.pkg`。
+用同一页面的 “Upload File” 传到 `/tmp/`，然后 `pkg add /tmp/os-kixdns-community-0.3-FreeBSD_14_amd64.pkg`。
 
 安装脚本（post-install）会自动：重启 configd、跑模型迁移、重载 `OPNsense/KixDNS` 与 `OPNsense/Syslog` 模板。
 **不需要**手工重启任何服务。

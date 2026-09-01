@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  PLUGIN_VERSION: "0.2"
+  PLUGIN_VERSION: "0.3"
   PLUGIN_NAME: "kixdns-community"
   PKG_NAME: "os-kixdns-community"
   KIXDNS_REF: ${{ github.event.inputs.kixdns_ref || 'main' }}
@@ -134,13 +134,13 @@ jobs:
               "product_abi": "${{ matrix.opnsense_abi }}",
               "product_arch": "amd64",
               "product_conflicts": "",
-              "product_email": "troubadour-hell@users.noreply.github.com",
+              "product_email": "Quan-0505@users.noreply.github.com",
               "product_hash": "${GITHUB_SHA}",
               "product_id": "${PKG_NAME}",
               "product_name": "${PLUGIN_NAME}",
               "product_tier": "3",
               "product_version": "${PLUGIN_VERSION}",
-              "product_website": "https://github.com/troubadour-hell/opn-kixdns"
+              "product_website": "https://github.com/Quan-0505/opn-kixdns"
           }
           EOF
 
@@ -189,8 +189,8 @@ jobs:
               "version": os.environ["PLUGIN_VERSION"],
               "origin": "opnsense/" + os.environ["PKG_NAME"],
               "comment": "KixDNS High Performance DNS Server",
-              "maintainer": "troubadour-hell@users.noreply.github.com",
-              "www": "https://github.com/troubadour-hell/opn-kixdns",
+              "maintainer": "Quan-0505@users.noreply.github.com",
+              "www": "https://github.com/Quan-0505/opn-kixdns",
               "abi": os.environ["PKG_ABI"],
               "arch": os.environ["PKG_ARCH"],
               "prefix": "/usr/local",

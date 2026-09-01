@@ -1,2 +1,3 @@
 pipeline.json:/usr/local/etc/kixdns/pipeline.json
 kixdns:/etc/rc.conf.d/kixdns
+newsyslog.conf:/etc/newsyslog.conf.d/kixdns

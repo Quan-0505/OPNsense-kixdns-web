@@ -3,11 +3,11 @@
   <p><strong>KixDNS</strong> — a high-performance, asynchronous DNS server written in Rust, integrated into OPNsense with hot-reloadable anti-pollution pipelines.</p>
 
   <p>
-    <a href="https://github.com/Quan-0505/opn-kixdns/releases"><img src="https://img.shields.io/github/v/release/Quan-0505/opn-kixdns?style=flat-square&color=0b5" alt="Release" /></a>
-    <a href="https://github.com/Quan-0505/opn-kixdns/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Quan-0505/opn-kixdns?style=flat-square" alt="License" /></a>
+    <a href="https://github.com/Quan-0505/OPNsense-kixdns-web/releases"><img src="https://img.shields.io/github/v/release/Quan-0505/OPNsense-kixdns-web?style=flat-square&color=0b5" alt="Release" /></a>
+    <a href="https://github.com/Quan-0505/OPNsense-kixdns-web/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Quan-0505/OPNsense-kixdns-web?style=flat-square" alt="License" /></a>
     <a href="https://github.com/olicesx/kixdns"><img src="https://img.shields.io/badge/engine-KixDNS%20(Rust)-e05d44?style=flat-square" alt="Engine" /></a>
     <a href="https://opnsense.org/"><img src="https://img.shields.io/badge/OPNsense-25.7%20%C2%B7%2026.1%20%C2%B7%2026.7-0095D5?style=flat-square" alt="OPNsense" /></a>
-    <a href="https://github.com/Quan-0505/opn-kixdns/commits/main"><img src="https://img.shields.io/github/last-commit/Quan-0505/opn-kixdns?style=flat-square" alt="Last commit" /></a>
+    <a href="https://github.com/Quan-0505/OPNsense-kixdns-web/commits/main"><img src="https://img.shields.io/github/last-commit/Quan-0505/OPNsense-kixdns-web?style=flat-square" alt="Last commit" /></a>
   </p>
 
   <p>
@@ -68,10 +68,10 @@ Check with `pkg config abi` if unsure.
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/opn-kixdns/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/opn-kixdns/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_14_amd64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.

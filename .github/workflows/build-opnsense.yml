@@ -22,8 +22,18 @@ env:
 
 jobs:
   build-binary:
-    name: Cross build kixdns for FreeBSD amd64
+    name: Cross build kixdns (${{ matrix.short }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-freebsd
+            short: amd64
+            artifact: kixdns-freebsd-amd64
+          - target: aarch64-unknown-freebsd
+            short: arm64
+            artifact: kixdns-freebsd-arm64
     steps:
       - name: Resolve kixdns commit
         id: kixdns-sha
@@ -38,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kixdns-bin/
-          key: kixdns-freebsd-amd64-${{ steps.kixdns-sha.outputs.sha }}
+          key: kixdns-freebsd-${{ matrix.short }}-${{ steps.kixdns-sha.outputs.sha }}
 
       - name: Checkout kixdns
         if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
@@ -69,13 +79,13 @@ jobs:
         run: |
           command -v cross >/dev/null 2>&1 || cargo install cross --git https://github.com/cross-rs/cross --locked
 
-      - name: Build (cross, x86_64-unknown-freebsd)
+      - name: Build (cross, ${{ matrix.target }})
         if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
         working-directory: kixdns-src
         run: |
-          cross build --release --locked --target x86_64-unknown-freebsd
+          cross build --release --locked --target ${{ matrix.target }}
           mkdir -p ../kixdns-bin
-          cp target/x86_64-unknown-freebsd/release/kixdns ../kixdns-bin/kixdns
+          cp target/${{ matrix.target }}/release/kixdns ../kixdns-bin/kixdns
 
       - name: Verify binary is a FreeBSD executable
         run: |
@@ -85,7 +95,7 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: kixdns-freebsd-amd64
+          name: ${{ matrix.artifact }}
           path: kixdns-bin/kixdns
           compression-level: 0
 
@@ -97,14 +107,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # OPNsense 25.7 / 26.1 run on FreeBSD 14
+          # OPNsense 25.7 / 26.1 run on FreeBSD 14 (x86_64)
           - abi: "FreeBSD:14:amd64"
             arch: "freebsd:14:x86:64"
             opnsense_abi: "26.1"
-          # OPNsense 26.7 and newer run on FreeBSD 15
+            product_arch: "amd64"
+            bin_artifact: "kixdns-freebsd-amd64"
+          # OPNsense 26.7 and newer run on FreeBSD 15 (x86_64)
           - abi: "FreeBSD:15:amd64"
             arch: "freebsd:15:x86:64"
             opnsense_abi: "26.7"
+            product_arch: "amd64"
+            bin_artifact: "kixdns-freebsd-amd64"
+          # OPNsense 26.7 on arm64 (NanoPi R4S etc.)
+          - abi: "FreeBSD:15:aarch64"
+            arch: "freebsd:15:aarch64"
+            opnsense_abi: "26.7"
+            product_arch: "aarch64"
+            bin_artifact: "kixdns-freebsd-arm64"
     steps:
       - name: Checkout plugin
         uses: actions/checkout@v4
@@ -112,7 +132,7 @@ jobs:
       - name: Download binary
         uses: actions/download-artifact@v4
         with:
-          name: kixdns-freebsd-amd64
+          name: ${{ matrix.bin_artifact }}
           path: kixdns-bin
 
       - name: Stage package root
@@ -132,7 +152,7 @@ jobs:
           cat > "stage/usr/local/opnsense/version/${PLUGIN_NAME}" <<EOF
           {
               "product_abi": "${{ matrix.opnsense_abi }}",
-              "product_arch": "amd64",
+              "product_arch": "${{ matrix.product_arch }}",
               "product_conflicts": "",
               "product_email": "Quan-0505@users.noreply.github.com",
               "product_hash": "${GITHUB_SHA}",
@@ -140,7 +160,7 @@ jobs:
               "product_name": "${PLUGIN_NAME}",
               "product_tier": "3",
               "product_version": "${PLUGIN_VERSION}",
-              "product_website": "https://github.com/Quan-0505/opn-kixdns"
+              "product_website": "https://github.com/Quan-0505/OPNsense-kixdns-web"
           }
           EOF
 
@@ -187,10 +207,10 @@ jobs:
           manifest = {
               "name": os.environ["PKG_NAME"],
               "version": os.environ["PLUGIN_VERSION"],
-              "origin": "opnsense/" + os.environ["PKG_NAME"],
+              "origin": "local/" + os.environ["PKG_NAME"],
               "comment": "KixDNS High Performance DNS Server",
               "maintainer": "Quan-0505@users.noreply.github.com",
-              "www": "https://github.com/Quan-0505/opn-kixdns",
+              "www": "https://github.com/Quan-0505/OPNsense-kixdns-web",
               "abi": os.environ["PKG_ABI"],
               "arch": os.environ["PKG_ARCH"],
               "prefix": "/usr/local",
@@ -241,13 +261,13 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PKG_NAME }}-${{ env.PLUGIN_VERSION }}-${{ matrix.opnsense_abi }}
+          name: ${{ env.PKG_FILE }}
           path: ${{ env.PKG_FILE }}
           compression-level: 0
 
       # Publishing a release makes installation a single command on a box
       # without SSH access:
-      #   pkg add https://github.com/<user>/opn-kixdns/releases/download/<tag>/<file>.pkg
+      #   pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/<tag>/<file>.pkg
       - name: Attach package to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

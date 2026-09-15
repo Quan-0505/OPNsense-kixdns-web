@@ -175,10 +175,6 @@ python verify_pkg.py         # 独立验证已构建的 .pkg
 python build_pkg.py          # 构建全部 ABI 包（--target aarch64 构建 arm64 包）
 ```
 
-## 📚 文档
-
-- [DIAGNOSIS.md](DIAGNOSIS.md) —— v0.1 发现的完整缺陷清单及各自的修复方式 · 另提供[中文](DIAGNOSIS.md) / [English](DIAGNOSIS.en.md) 两版。
-
 ## 📄 许可证
 
 GPL-3.0 —— 与上游 [KixDNS](https://github.com/olicesx/kixdns) 相同。

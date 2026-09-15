@@ -180,10 +180,6 @@ python verify_pkg.py         # independent verification of a built .pkg
 python build_pkg.py          # build both ABI packages (--target aarch64 builds the arm64 package)
 ```
 
-## 📚 Documentation
-
-- [DIAGNOSIS.md](DIAGNOSIS.md) — the full defect list found in v0.1 and how each was fixed · also in [Chinese](DIAGNOSIS.md) / [English](DIAGNOSIS.en.md).
-
 ## 📄 License
 
 GPL-3.0 — same as upstream [KixDNS](https://github.com/olicesx/kixdns).

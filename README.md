@@ -11,6 +11,11 @@
   </p>
 
   <p>
+    <strong>English</strong> &nbsp;|&nbsp;
+    <a href="./README.zh-CN.md">简体中文</a>
+  </p>
+
+  <p>
     <a href="#features">Features</a> &nbsp;&middot;&nbsp;
     <a href="#web-console">Web console</a> &nbsp;&middot;&nbsp;
     <a href="#native-observability">Observability</a> &nbsp;&middot;&nbsp;
@@ -149,7 +154,7 @@ The post-install hook restarts `configd`, runs migrations, and reloads the `OPNs
 ## ✅ Verify
 
 ```sh
-configctl kixdns version                 # e.g. "kixdns 0.1.0" — binary runs
+configctl kixdns version                 # e.g. "kixdns 0.2.0" — binary runs
 cat /etc/rc.conf.d/kixdns                # kixdns_enable="YES" once enabled
 configctl kixdns status                  # "kixdns is running as pid ..."
 curl -s -u "$APIKEY:$APISECRET" https://127.0.0.1/api/kixdns/stats/overview  # console statistics API

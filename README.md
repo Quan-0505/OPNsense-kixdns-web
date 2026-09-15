@@ -113,15 +113,15 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 | OPNsense | pkg ABI | package |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5-FreeBSD_14_amd64.pkg` |
-| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5-FreeBSD_15_amd64.pkg` |
-| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.1-FreeBSD_14_amd64.pkg` |
+| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.1-FreeBSD_15_amd64.pkg` |
+| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.1-FreeBSD_15_aarch64.pkg` |
 
 Check with `pkg config abi` if unsure.
 
 Each package bundles a kixdns binary cross-built from **upstream `main`** by this repository's CI
 (`KIXDNS_REF`, default `main`), so packages track the newest engine rather than the last tagged release.
-`kixdns --version` reports `0.1.0` for every upstream build — identify a build by its size/hash if needed.
+The bundled binary is **stamped with the engine version at build time**, so `kixdns --version` reports `0.2.0` even though upstream leaves its own `Cargo.toml` at `0.1.0`.
 
 ### 2. Install (no SSH needed)
 
@@ -129,13 +129,13 @@ Each package bundles a kixdns binary cross-built from **upstream `main`** by thi
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5/os-kixdns-community-0.5-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.1/os-kixdns-community-0.5.1-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5/os-kixdns-community-0.5-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.1/os-kixdns-community-0.5.1-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ on arm64 (e.g. NanoPi R4S)
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5/os-kixdns-community-0.5-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.1/os-kixdns-community-0.5.1-FreeBSD_15_aarch64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.

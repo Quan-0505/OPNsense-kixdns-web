@@ -173,7 +173,7 @@ python check_plugin.py       # static consistency + regression guards
 python check_templates.py    # render configd templates (Jinja2, mirrors configd)
 python check_packaging.py    # dry-run the manifest/tar packaging logic
 python verify_pkg.py         # independent verification of a built .pkg
-python build_pkg.py          # build both ABI packages
+python build_pkg.py          # build both ABI packages (--target aarch64 builds the arm64 package)
 ```
 
 ## 📚 Documentation

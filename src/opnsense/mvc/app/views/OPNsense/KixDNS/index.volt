@@ -75,27 +75,31 @@
                 <span class="agh-muted">bind <code id="k-bind">...</code></span>
                 <span class="agh-sep">&middot;</span>
                 <span class="agh-muted">接管 takeover <span id="k-mode">...</span></span>
+                <span class="agh-sep">&middot;</span>
+                <span class="agh-muted" id="k-debug">...</span>
+                <span class="agh-sep">&middot;</span>
+                <span class="agh-muted" id="k-scope"></span>
                 <span class="pull-right agh-muted" id="k-generated"></span>
             </div>
 
             <div class="agh-cards">
                 <div class="agh-card">
-                    <div class="agh-label">转发查询 Forwarded queries</div>
+                    <div class="agh-label" id="k-c1-label">Queries</div>
                     <div class="agh-value" id="k-total">&ndash;</div>
-                    <div class="agh-sub" id="k-total-sub">今日回源转发（缓存命中为 debug 级日志，不计入）</div>
+                    <div class="agh-sub" id="k-total-sub">&nbsp;</div>
                 </div>
                 <div class="agh-card">
-                    <div class="agh-label">唯一域名 Unique domains</div>
+                    <div class="agh-label" id="k-c2-label">Unique domains</div>
                     <div class="agh-value" id="k-domains">&ndash;</div>
                     <div class="agh-sub" id="k-domains-sub">&nbsp;</div>
                 </div>
                 <div class="agh-card">
-                    <div class="agh-label">平均延迟 Avg latency</div>
+                    <div class="agh-label" id="k-c3-label">Latency</div>
                     <div class="agh-value" id="k-latency">&ndash;</div>
-                    <div class="agh-sub">ms</div>
+                    <div class="agh-sub" id="k-latency-sub">&nbsp;</div>
                 </div>
                 <div class="agh-card">
-                    <div class="agh-label">慢查询 Slow &gt;500ms</div>
+                    <div class="agh-label" id="k-c4-label">Slow queries</div>
                     <div class="agh-value" id="k-slow">&ndash;</div>
                     <div class="agh-sub" id="k-slow-sub">&nbsp;</div>
                 </div>
@@ -1102,6 +1106,7 @@ var KixDNSEditor = (function($) {
             $('#k-state').text(d.running ? '运行中 running' : '已停止 stopped');
             $('#k-version').text(d.version || '');
             $('#k-bind').text(d.bind || '');
+            $('#k-debug').text(d.debug ? 'debug on' : 'debug off');
             var mode = d.mode === 'direct' ? ('直接监听 ' + d.bind)
                      : (d.mode === 'redirect' ? ('iptables 重定向 (' + d.iptables_rules + ' 条)') : '未接管');
             $('#k-mode').text(mode);
@@ -1152,19 +1157,45 @@ var KixDNSEditor = (function($) {
     function loadOverview() {
         api('overview', {}, function (err, d) {
             if (err || !d) return;
-            $('#k-total').text(num(d.total));
-            $('#k-domains').text(num(d.unique_domains));
-            $('#k-domains-sub').text('已缓存可复用 ' + (d.cached_ratio || 0) + '%');
-            $('#k-latency').text(d.avg_latency);
-            $('#k-slow').text(num(d.slow_queries));
-            $('#k-slow-sub').text(d.total > 0 ? (Math.round(1000 * d.slow_queries / d.total) / 10) + '% of total' : '');
+            if (d.observer) {
+                // native observer data (kixdns >= 0.2.0 with --debug)
+                $('#k-scope').text('原生观测 observer');
+                $('#k-c1-label').text('客户端请求 Client queries');
+                $('#k-total').text(num(d.requests));
+                $('#k-total-sub').text(num(d.cache_hits) + ' 命中 / ' + num(d.cache_misses) + ' 回源');
+                $('#k-c2-label').text('缓存命中率 Cache hit ratio');
+                $('#k-domains').text(d.cache_hit_ratio === null ? '\u2013' : d.cache_hit_ratio + '%');
+                $('#k-domains-sub').text(num(d.unique_domains) + ' 个唯一域名');
+                $('#k-c3-label').text('端到端延迟 End-to-end');
+                $('#k-latency').text(d.e2e_avg_latency === null ? '\u2013' : d.e2e_avg_latency);
+                $('#k-latency-sub').text('ms（含缓存命中；上游 ' + (d.upstream_avg_latency === null ? '-' : d.upstream_avg_latency) + ' ms）');
+                $('#k-c4-label').text('慢查询 Slow >500ms');
+                $('#k-slow').text(num(d.e2e_slow));
+                $('#k-slow-sub').text(d.requests > 0 ? (Math.round(1000 * d.e2e_slow / d.requests) / 10) + '% of requests' : '');
+            } else {
+                // info-level fallback: forwarded (upstream) responses only
+                $('#k-scope').text('日志口径 forwarded（开启 Debug 可得原生观测）');
+                $('#k-c1-label').text('转发查询 Forwarded queries');
+                $('#k-total').text(num(d.forwarded_total));
+                $('#k-total-sub').text('回源转发（缓存命中不在此口径内）');
+                $('#k-c2-label').text('唯一域名 Unique domains');
+                $('#k-domains').text(num(d.unique_domains));
+                $('#k-domains-sub').text(num(d.cache_hits) + ' 条响应被缓存');
+                $('#k-c3-label').text('回源延迟 Upstream latency');
+                $('#k-latency').text(d.avg_latency);
+                $('#k-latency-sub').text('ms（仅回源请求）');
+                $('#k-c4-label').text('慢查询 Slow >500ms');
+                $('#k-slow').text(num(d.slow_queries));
+                $('#k-slow-sub').text(d.forwarded_total > 0 ? (Math.round(1000 * d.slow_queries / d.forwarded_total) / 10) + '% of forwarded' : '');
+            }
             $('#k-generated').text('更新 ' + (d.generated || '').replace('T', ' ').substring(0, 19));
             $('#k-logfile').text(d.log_file || '');
             drawTrend(d.hourly || {});
-            renderRows('#k-top-domains', d.top_domains, d.total);
-            renderRows('#k-top-clients', d.top_clients, d.total);
-            renderRows('#k-upstreams', d.upstreams, d.total);
-            renderSimple('#k-rcodes', d.rcode, 8, d.total);
+            var scopeTotal = d.observer ? d.requests : d.forwarded_total;
+            renderRows('#k-top-domains', d.top_domains, scopeTotal);
+            renderRows('#k-top-clients', d.top_clients, scopeTotal);
+            renderRows('#k-upstreams', d.upstreams, scopeTotal);
+            renderSimple('#k-rcodes', d.rcode, 8, scopeTotal);
         });
     }
 

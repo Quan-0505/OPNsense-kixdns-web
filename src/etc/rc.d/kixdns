@@ -17,6 +17,11 @@ load_rc_config $name
 : ${kixdns_debug:="NO"}
 : ${kixdns_log_level:="info"}
 : ${kixdns_udp_workers:="0"}
+# RUST_LOG used while kixdns_debug=YES. kixdns >= 0.2.0 installs its built-in
+# observer under the "kixdns::observe" tracing target, so a scoped filter keeps
+# the native statistics events (request/cache/upstream lifecycle) without the
+# full internal debug stream, which can produce ~170 MB of log per day.
+: ${kixdns_debug_log_level:="info,kixdns::observe=debug"}
 
 pidfile="/var/run/${name}.pid"
 command="/usr/sbin/daemon"
@@ -34,7 +39,10 @@ kixdns_subcmd="run --config ${kixdns_config} --listener-label ${kixdns_listener_
 
 if checkyesno kixdns_debug; then
 	kixdns_subcmd="${kixdns_subcmd} --debug"
-	kixdns_log_level="debug"
+	# --debug installs the observer; the filter below decides how much of the
+	# event stream reaches syslog (see kixdns_debug_log_level above). Set
+	# kixdns_debug_log_level="debug" in /etc/rc.conf.d/kixdns for everything.
+	kixdns_log_level="${kixdns_debug_log_level}"
 fi
 
 case "${kixdns_udp_workers}" in

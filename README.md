@@ -13,6 +13,7 @@
   <p>
     <a href="#features">Features</a> &nbsp;&middot;&nbsp;
     <a href="#web-console">Web console</a> &nbsp;&middot;&nbsp;
+    <a href="#native-observability">Observability</a> &nbsp;&middot;&nbsp;
     <a href="#how-it-works">How it works</a> &nbsp;&middot;&nbsp;
     <a href="#installation">Installation</a> &nbsp;&middot;&nbsp;
     <a href="#verify">Verify</a> &nbsp;&middot;&nbsp;
@@ -48,7 +49,45 @@
 
 The panes are backed by `api/kixdns/stats/*`, which parses the kixdns log **incrementally** (byte-offset cursor plus a short-lived cache file), so a resolver producing 100k+ log lines a day stays cheap to summarise.
 
-> **Reading the numbers.** At `info` level kixdns logs only *forwarded* responses — cache hits are emitted at `debug` level and are therefore absent from these counters. "Forwarded queries" is the upstream-bound volume (not the total client query rate), and every ratio column uses that same total as its denominator.
+> **Two data scopes.** With **Debug** enabled (kixdns >= 0.2.0 native observer, see below) the console
+> reports true client queries, the real cache hit ratio and end-to-end latency. Without it the only
+> records in the log are *forwarded* (upstream-bound) responses — cache hits are invisible, so the
+> console then shows that narrower scope and says so in the status strip. Every ratio column always
+> uses the total of the active scope as its denominator.
+
+## 🔭 Native observability
+
+kixdns >= 0.2.0 ships an **Observer API** (`EngineObserver`) and installs its reference implementation when the
+daemon is started with `--debug`. This plugin passes `--debug` whenever **Settings → Debug** is enabled, so the
+engine emits structured lifecycle events into the log:
+
+```
+event="request_started"  request_id=41 listener="default" client=192.168.5.106:53121 qname="www.baidu.com" qtype=A
+event="cache_miss"       request_id=41
+event="upstream_result"  request_id=41 upstream="202.96.128.86:53" outcome=Success latency_us=13004 rcode=No Error
+event="request_finished" request_id=41 status=Completed latency_us=13220
+event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
+```
+
+The dashboard consumes them and switches to the **observer scope**:
+
+| Metric | observer scope (Debug on) | log scope (Debug off) |
+| --- | --- | --- |
+| Queries | every client request | forwarded (upstream) responses only |
+| Cache hit ratio | real `hits / (hits + misses)` | not available |
+| Latency | end-to-end, including answers served from cache | upstream round-trip only |
+| Upstream health | per-attempt outcome and latency | response records only |
+
+**Cost and control.** The event stream is verbose — a busy gateway can write 100–250 MB of log per day. Two
+things keep that bounded:
+
+* the bundled newsyslog rule rotates daily **and** at 200 MB per file, keeping 3 compressed copies (~600 MB ceiling);
+* `kixdns_debug_log_level` in `/etc/rc.conf.d/kixdns` sets the `RUST_LOG` filter used while Debug is on. The
+  default is `info,kixdns::observe=debug`, which keeps the observer events and drops the rest of the debug
+  stream. Set it to `debug` only when debugging the engine itself.
+
+Reverting is a single switch: turn **Debug** off and the console falls back to log scope with the normal
+`info` log volume.
 
 ## 🏗️ How it works
 
@@ -74,11 +113,15 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 | OPNsense | pkg ABI | package |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.4-FreeBSD_14_amd64.pkg` |
-| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.4-FreeBSD_15_amd64.pkg` |
-| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.4-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5-FreeBSD_14_amd64.pkg` |
+| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5-FreeBSD_15_amd64.pkg` |
+| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5-FreeBSD_15_aarch64.pkg` |
 
 Check with `pkg config abi` if unsure.
+
+Each package bundles a kixdns binary cross-built from **upstream `main`** by this repository's CI
+(`KIXDNS_REF`, default `main`), so packages track the newest engine rather than the last tagged release.
+`kixdns --version` reports `0.1.0` for every upstream build — identify a build by its size/hash if needed.
 
 ### 2. Install (no SSH needed)
 
@@ -86,13 +129,13 @@ Check with `pkg config abi` if unsure.
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.4/os-kixdns-community-0.4-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5/os-kixdns-community-0.5-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.4/os-kixdns-community-0.4-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5/os-kixdns-community-0.5-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ on arm64 (e.g. NanoPi R4S)
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.4/os-kixdns-community-0.4-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5/os-kixdns-community-0.5-FreeBSD_15_aarch64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.

@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  PLUGIN_VERSION: "0.3"
+  PLUGIN_VERSION: "0.4"
   PLUGIN_NAME: "kixdns-community"
   PKG_NAME: "os-kixdns-community"
   KIXDNS_REF: ${{ github.event.inputs.kixdns_ref || 'main' }}

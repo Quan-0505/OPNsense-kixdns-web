@@ -12,6 +12,7 @@
 
   <p>
     <a href="#features">Features</a> &nbsp;&middot;&nbsp;
+    <a href="#web-console">Web console</a> &nbsp;&middot;&nbsp;
     <a href="#how-it-works">How it works</a> &nbsp;&middot;&nbsp;
     <a href="#installation">Installation</a> &nbsp;&middot;&nbsp;
     <a href="#verify">Verify</a> &nbsp;&middot;&nbsp;
@@ -28,10 +29,26 @@
 - 🧩 **Pipeline editor** — Full graphical editing of `settings`, `pipeline_select` and `pipelines` with live JSON preview, import/export and a per-rule matcher/action builder.
 - 🛡️ **Anti-DNS-pollution** — Multi-stage rules that query an ISP resolver first, detect poisoning (reserved/forged answer records), then re-resolve over **DoH** (Ali/Tencent) — HTTPS-encrypted and immune to UDP injection.
 - 🔄 **Hot reload** — The config file is watched; edits are applied atomically without restarting the server or dropping the port.
-- 📊 **Web UI integration** — Service start/stop/restart/status with a live status light, all managed from the OPNsense dashboard.
+- 📊 **AdGuardHome-style console** — A dashboard with query statistics, trend chart and Top-N tables, plus a filterable live query log (see [Web console](#web-console)).
+- 🎛️ **Service control** — start/stop/restart with a live status light, shown next to the runtime takeover mode and version.
 - 🔬 **Diagnostics** — The settings page reports `kixdns --version` at runtime, so missing binaries / wrong ABI are visible before you touch the pipeline.
 - 📜 **Log rotation** — Built-in newsyslog config rotates `/var/log/kixdns/*.log` daily (7 gzip copies) — logs never grow unbounded.
 - 📄 **ACL + log viewer** — Ships an ACL so non-admin users can be granted access, and a **Log File** menu entry that streams the kixdns log straight into the GUI.
+
+## 📊 Web console
+
+**Services → KixDNS** opens an AdGuardHome-style console with four tabs:
+
+| Tab | Contents |
+| --- | --- |
+| **Dashboard** | Forwarded-query total, unique domains, average latency and slow-query count; an hourly query-trend chart (Chart.js ships with OPNsense); Top domains / Top clients / upstream distribution; response-code breakdown. |
+| **Query Log** | Live table of handled queries (time · client · domain · type · rcode · upstream · latency · cache) with domain/client filters, row-count selector and 3s/5s/15s auto-refresh. |
+| **Settings** | Enable/disable, listener label, log level, debug flag, UDP workers — unchanged from before. |
+| **Pipeline Editor** | Graphical editing of `settings`, `pipeline_select` and `pipelines` with live JSON preview, import/export and per-rule builders — unchanged from before. |
+
+The panes are backed by `api/kixdns/stats/*`, which parses the kixdns log **incrementally** (byte-offset cursor plus a short-lived cache file), so a resolver producing 100k+ log lines a day stays cheap to summarise.
+
+> **Reading the numbers.** At `info` level kixdns logs only *forwarded* responses — cache hits are emitted at `debug` level and are therefore absent from these counters. "Forwarded queries" is the upstream-bound volume (not the total client query rate), and every ratio column uses that same total as its denominator.
 
 ## 🏗️ How it works
 
@@ -57,9 +74,9 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 | OPNsense | pkg ABI | package |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.3-FreeBSD_14_amd64.pkg` |
-| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.3-FreeBSD_15_amd64.pkg` |
-| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.3-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.4-FreeBSD_14_amd64.pkg` |
+| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.4-FreeBSD_15_amd64.pkg` |
+| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.4-FreeBSD_15_aarch64.pkg` |
 
 Check with `pkg config abi` if unsure.
 
@@ -69,13 +86,13 @@ Check with `pkg config abi` if unsure.
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.4/os-kixdns-community-0.4-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.4/os-kixdns-community-0.4-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ on arm64 (e.g. NanoPi R4S)
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.4/os-kixdns-community-0.4-FreeBSD_15_aarch64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.
@@ -92,6 +109,7 @@ The post-install hook restarts `configd`, runs migrations, and reloads the `OPNs
 configctl kixdns version                 # e.g. "kixdns 0.1.0" — binary runs
 cat /etc/rc.conf.d/kixdns                # kixdns_enable="YES" once enabled
 configctl kixdns status                  # "kixdns is running as pid ..."
+curl -s -u "$APIKEY:$APISECRET" https://127.0.0.1/api/kixdns/stats/overview  # console statistics API
 sockstat -4 -l | grep ':53'              # KixDNS bound to :53
 tail -n 50 /var/log/kixdns/kixdns_*.log  # or Services → KixDNS → Log File
 ```

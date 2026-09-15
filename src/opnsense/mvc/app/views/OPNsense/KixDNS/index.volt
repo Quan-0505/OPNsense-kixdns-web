@@ -1,5 +1,5 @@
 {#
- # KixDNS Configuration View
+ # KixDNS management view - AdGuardHome-style UI
  # Copyright (C) 2025 KixDNS Project
  #}
 <style>
@@ -14,16 +14,197 @@
     .kixdns-editor .badge-action { background: #ffc107; color: black; }
     .kixdns-editor .badge-response { background: #28a745; color: white; }
     .kixdns-editor .json-textarea { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; background: #1e1e1e; color: #d4d4d4; border: none; resize: none; }
+
+    /* ---------- AdGuardHome-style theme (kixdns) ---------- */
+    .agh-wrap { padding: 14px 4px 22px; }
+    .agh-status { display:flex; align-items:center; gap:10px; font-size:13px; color:#4a5568;
+                  background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 14px; margin-bottom:14px; }
+    .agh-dot { width:10px; height:10px; border-radius:50%; background:#cbd5e0; flex:0 0 auto; }
+    .agh-dot.on { background:#48bb78; box-shadow:0 0 6px #48bb78; }
+    .agh-dot.off { background:#f56565; }
+    .agh-sep { color:#cbd5e0; }
+    .agh-cards { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+    .agh-card { flex:1; min-width:165px; background:#fff; border:1px solid #e2e8f0; border-radius:10px;
+                padding:14px 16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .agh-label { font-size:12px; color:#718096; }
+    .agh-value { font-size:26px; font-weight:700; color:#2d3748; margin-top:4px; line-height:1.15; }
+    .agh-sub { font-size:11px; color:#a0aec0; margin-top:2px; }
+    .agh-panel { background:#fff; border:1px solid #e2e8f0; border-radius:10px;
+                 margin-bottom:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .agh-panel-head { padding:10px 14px; border-bottom:1px solid #edf2f7; font-weight:600;
+                      font-size:13px; color:#2d3748; }
+    .agh-panel-body { padding:12px 14px; }
+    .agh-table { width:100%; font-size:13px; border-collapse:collapse; }
+    .agh-table th { text-align:left; color:#718096; font-weight:600; font-size:12px;
+                    padding:6px 8px; border-bottom:1px solid #edf2f7; }
+    .agh-table td { padding:6px 8px; border-bottom:1px solid #f7fafc; color:#2d3748; }
+    .agh-table tbody tr:hover td { background:#f7fafc; }
+    .agh-table td.num, .agh-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .agh-bar { height:6px; border-radius:3px; background:#48bb78; display:inline-block; vertical-align:middle; }
+    .agh-muted { color:#a0aec0; font-size:12px; }
+    .agh-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    .agh-toolbar input.form-control, .agh-toolbar select.form-control { width:auto; min-width:150px; }
+    .agh-pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; }
+    .agh-pill.ok { background:#c6f6d5; color:#22543d; }
+    .agh-pill.warn { background:#fefcbf; color:#744210; }
+    .agh-pill.err { background:#fed7d7; color:#822727; }
+    .agh-pill.cache { background:#bee3f8; color:#2a4365; }
+    .agh-pill.dim { background:#edf2f7; color:#4a5568; }
+    .agh-log td { white-space:nowrap; }
+    .agh-log td.k-domain { max-width:360px; overflow:hidden; text-overflow:ellipsis; }
+
 </style>
 
 <ul class="nav nav-tabs" data-tabs="tabs" id="maintabs">
-    <li class="active"><a data-toggle="tab" href="#general">{{ lang._('General') }}</a></li>
-    <li><a data-toggle="tab" href="#editor" id="editor-tab">{{ lang._('Pipeline Editor') }}</a></li>
+    <li class="active"><a data-toggle="tab" href="#dashboard"><i class="fa fa-tachometer"></i> {{ lang._('Dashboard') }}</a></li>
+    <li><a data-toggle="tab" href="#querylog" id="querylog-tab"><i class="fa fa-search"></i> {{ lang._('Query Log') }}</a></li>
+    <li><a data-toggle="tab" href="#general"><i class="fa fa-cog"></i> {{ lang._('Settings') }}</a></li>
+    <li><a data-toggle="tab" href="#editor" id="editor-tab"><i class="fa fa-sitemap"></i> {{ lang._('Pipeline Editor') }}</a></li>
 </ul>
 
 <div class="tab-content content-box">
-    <!-- General Settings (Simplified) -->
-    <div id="general" class="tab-pane fade in active">
+    <!-- Dashboard (AdGuardHome style) -->
+    <div id="dashboard" class="tab-pane fade in active">
+        <div class="agh-wrap">
+            <div class="agh-status">
+                <span class="agh-dot" id="k-dot"></span>
+                <strong id="k-state">...</strong>
+                <span class="agh-sep">&middot;</span>
+                <span id="k-version" class="agh-muted">...</span>
+                <span class="agh-sep">&middot;</span>
+                <span class="agh-muted">bind <code id="k-bind">...</code></span>
+                <span class="agh-sep">&middot;</span>
+                <span class="agh-muted">接管 takeover <span id="k-mode">...</span></span>
+                <span class="pull-right agh-muted" id="k-generated"></span>
+            </div>
+
+            <div class="agh-cards">
+                <div class="agh-card">
+                    <div class="agh-label">转发查询 Forwarded queries</div>
+                    <div class="agh-value" id="k-total">&ndash;</div>
+                    <div class="agh-sub" id="k-total-sub">今日回源转发（缓存命中为 debug 级日志，不计入）</div>
+                </div>
+                <div class="agh-card">
+                    <div class="agh-label">唯一域名 Unique domains</div>
+                    <div class="agh-value" id="k-domains">&ndash;</div>
+                    <div class="agh-sub" id="k-domains-sub">&nbsp;</div>
+                </div>
+                <div class="agh-card">
+                    <div class="agh-label">平均延迟 Avg latency</div>
+                    <div class="agh-value" id="k-latency">&ndash;</div>
+                    <div class="agh-sub">ms</div>
+                </div>
+                <div class="agh-card">
+                    <div class="agh-label">慢查询 Slow &gt;500ms</div>
+                    <div class="agh-value" id="k-slow">&ndash;</div>
+                    <div class="agh-sub" id="k-slow-sub">&nbsp;</div>
+                </div>
+            </div>
+
+            <div class="agh-panel">
+                <div class="agh-panel-head">
+                    查询趋势 Query trend <span class="agh-muted">(per hour, today)</span>
+                    <span class="pull-right agh-muted" id="k-logfile"></span>
+                </div>
+                <div class="agh-panel-body">
+                    <canvas id="k-chart-trend" height="80"></canvas>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="agh-panel">
+                        <div class="agh-panel-head">Top 域名 Top queried domains</div>
+                        <div class="agh-panel-body">
+                            <table class="agh-table"><tbody id="k-top-domains"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="agh-panel">
+                        <div class="agh-panel-head">Top 客户端 Top clients</div>
+                        <div class="agh-panel-body">
+                            <table class="agh-table"><tbody id="k-top-clients"></tbody></table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-7">
+                    <div class="agh-panel">
+                        <div class="agh-panel-head">上游响应 Upstreams</div>
+                        <div class="agh-panel-body">
+                            <table class="agh-table">
+                                <thead><tr><th>上游 upstream</th><th class="num">查询数</th><th>占比 share</th></tr></thead>
+                                <tbody id="k-upstreams"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-5">
+                    <div class="agh-panel">
+                        <div class="agh-panel-head">响应码 Response codes</div>
+                        <div class="agh-panel-body">
+                            <table class="agh-table">
+                                <thead><tr><th>code</th><th class="num">查询数</th><th>占比 share</th></tr></thead>
+                                <tbody id="k-rcodes"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="agh-muted">
+                <i class="fa fa-refresh"></i>
+                <a href="#" id="k-refresh">刷新 refresh</a> &middot;
+                <label style="font-weight:normal;margin-left:6px;">
+                    <input type="checkbox" id="k-autorefresh" checked> 自动刷新 auto (5s)
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Query Log (AdGuardHome style) -->
+    <div id="querylog" class="tab-pane fade">
+        <div class="agh-wrap">
+            <div class="agh-toolbar">
+                <input type="text" class="form-control input-sm" id="k-q-domain" placeholder="过滤域名 filter domain">
+                <input type="text" class="form-control input-sm" id="k-q-client" placeholder="过滤客户端 filter client">
+                <select class="form-control input-sm" id="k-q-limit">
+                    <option value="100">100 条</option>
+                    <option value="200" selected>200 条</option>
+                    <option value="500">500 条</option>
+                    <option value="1000">1000 条</option>
+                </select>
+                <select class="form-control input-sm" id="k-q-auto">
+                    <option value="0">自动刷新 off</option>
+                    <option value="3000">3s</option>
+                    <option value="5000" selected>5s</option>
+                    <option value="15000">15s</option>
+                </select>
+                <button class="btn btn-sm btn-primary" id="k-q-refresh"><i class="fa fa-refresh"></i> 刷新</button>
+                <span class="agh-muted" id="k-q-meta"></span>
+            </div>
+            <div class="agh-panel">
+                <div class="agh-panel-body" style="overflow-x:auto;">
+                    <table class="agh-table agh-log">
+                        <thead>
+                            <tr>
+                                <th>时间</th><th>客户端</th><th>域名</th><th>类型</th>
+                                <th>结果</th><th>上游</th><th class="num">延迟</th><th>缓存</th>
+                            </tr>
+                        </thead>
+                        <tbody id="k-q-body">
+                            <tr><td colspan="8" class="agh-muted">加载中 loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="general" class="tab-pane fade">
         <div class="content-box" style="padding-bottom: 1.5em;">
             {{ partial("layout_partials/base_form",['fields':generalForm,'id':'frm_general_settings']) }}
             <div class="col-md-12">
@@ -838,5 +1019,238 @@ var KixDNSEditor = (function($) {
     $('#btn-apply-config').click(apply);
 
     return { load: load, save: save, apply: apply };
+})(jQuery);
+</script>
+
+
+<script>
+/* ---------- AdGuardHome-style dashboard + query log ---------- */
+(function ($) {
+    var trendChart = null;
+    var dashTimer = null;
+    var logTimer = null;
+
+    function num(n) {
+        if (n === undefined || n === null || n === '') return '\u2013';
+        return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+
+    function esc(s) {
+        return String(s === undefined || s === null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function api(path, params, done) {
+        var qs = $.param(params || {});
+        $.getJSON('/api/kixdns/stats/' + path + (qs ? '?' + qs : ''))
+            .done(function (data) { done(null, data); })
+            .fail(function (xhr) { done(xhr, null); });
+    }
+
+    function ensureChart(cb) {
+        if (typeof Chart !== 'undefined') { cb(); return; }
+        var s = document.createElement('script');
+        s.src = '/ui/js/chart.umd.min.js';
+        s.onload = cb;
+        s.onerror = cb;
+        document.head.appendChild(s);
+    }
+
+    // rows: [{name,count}]; bar width is relative to the largest entry,
+    // the numeric share (when shown) is relative to the query total
+    function renderRows(tbody, rows, total) {
+        var $b = $(tbody).empty();
+        if (!rows || !rows.length) {
+            $b.append('<tr><td colspan="3" class="agh-muted">no data</td></tr>');
+            return;
+        }
+        var max = rows[0].count || 1;
+        rows.forEach(function (r) {
+            var w = max > 0 ? Math.round(100 * r.count / max) : 0;
+            var share = total > 0 ? (Math.round(1000 * r.count / total) / 10) : 0;
+            $b.append(
+                '<tr><td class="k-domain">' + esc(r.name) + '</td>' +
+                '<td class="num">' + num(r.count) + '</td>' +
+                '<td><span class="agh-bar" style="width:' + Math.max(2, w) + 'px"></span>' +
+                ' <span class="agh-muted">' + share + '%</span></td></tr>'
+            );
+        });
+    }
+
+    // obj: {key: count}; share is relative to the query total
+    function renderSimple(tbody, obj, limit, total) {
+        var $b = $(tbody).empty();
+        var keys = Object.keys(obj || {});
+        if (!keys.length) { $b.append('<tr><td colspan="3" class="agh-muted">no data</td></tr>'); return; }
+        var max = 0;
+        keys.forEach(function (k) { if (obj[k] > max) max = obj[k]; });
+        keys.slice(0, limit || 10).forEach(function (k) {
+            var w = max > 0 ? Math.round(100 * obj[k] / max) : 0;
+            var share = total > 0 ? (Math.round(1000 * obj[k] / total) / 10) : 0;
+            $b.append(
+                '<tr><td>' + esc(k) + '</td><td class="num">' + num(obj[k]) + '</td>' +
+                '<td><span class="agh-bar" style="width:' + Math.max(2, w) + 'px"></span>' +
+                ' <span class="agh-muted">' + share + '%</span></td></tr>'
+            );
+        });
+    }
+
+    function loadService() {
+        api('service', {}, function (err, d) {
+            if (err || !d) return;
+            $('#k-dot').attr('class', 'agh-dot ' + (d.running ? 'on' : 'off'));
+            $('#k-state').text(d.running ? '运行中 running' : '已停止 stopped');
+            $('#k-version').text(d.version || '');
+            $('#k-bind').text(d.bind || '');
+            var mode = d.mode === 'direct' ? ('直接监听 ' + d.bind)
+                     : (d.mode === 'redirect' ? ('iptables 重定向 (' + d.iptables_rules + ' 条)') : '未接管');
+            $('#k-mode').text(mode);
+        });
+    }
+
+    function drawTrend(hourly) {
+        var labels = [], data = [];
+        Object.keys(hourly).sort().forEach(function (h) {
+            labels.push(h + ':00');
+            data.push(hourly[h]);
+        });
+        ensureChart(function () {
+            if (typeof Chart === 'undefined') return;
+            var ctx = document.getElementById('k-chart-trend');
+            if (!ctx) return;
+            if (trendChart) {
+                trendChart.data.labels = labels;
+                trendChart.data.datasets[0].data = data;
+                trendChart.update();
+                return;
+            }
+            trendChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'queries',
+                        data: data,
+                        backgroundColor: 'rgba(72,187,120,0.65)',
+                        borderColor: '#48bb78',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    legend: { display: false },
+                    scales: {
+                        yAxes: [{ ticks: { beginAtZero: true, precision: 0 } }],
+                        xAxes: [{ gridLines: { display: false } }]
+                    }
+                }
+            });
+        });
+    }
+
+    function loadOverview() {
+        api('overview', {}, function (err, d) {
+            if (err || !d) return;
+            $('#k-total').text(num(d.total));
+            $('#k-domains').text(num(d.unique_domains));
+            $('#k-domains-sub').text('已缓存可复用 ' + (d.cached_ratio || 0) + '%');
+            $('#k-latency').text(d.avg_latency);
+            $('#k-slow').text(num(d.slow_queries));
+            $('#k-slow-sub').text(d.total > 0 ? (Math.round(1000 * d.slow_queries / d.total) / 10) + '% of total' : '');
+            $('#k-generated').text('更新 ' + (d.generated || '').replace('T', ' ').substring(0, 19));
+            $('#k-logfile').text(d.log_file || '');
+            drawTrend(d.hourly || {});
+            renderRows('#k-top-domains', d.top_domains, d.total);
+            renderRows('#k-top-clients', d.top_clients, d.total);
+            renderRows('#k-upstreams', d.upstreams, d.total);
+            renderSimple('#k-rcodes', d.rcode, 8, d.total);
+        });
+    }
+
+    function rcodePill(rcode) {
+        var r = (rcode || '').toLowerCase();
+        if (r === 'noerror') return 'ok';
+        if (r === 'nxdomain') return 'dim';
+        if (r === 'servfail' || r === 'refused') return 'err';
+        return 'warn';
+    }
+
+    function loadLog() {
+        var params = {
+            limit: $('#k-q-limit').val() || 200,
+            qname: $('#k-q-domain').val() || '',
+            client: $('#k-q-client').val() || ''
+        };
+        api('querylog', params, function (err, d) {
+            var $b = $('#k-q-body');
+            if (err || !d) {
+                $b.html('<tr><td colspan="8" class="agh-muted">加载失败 load failed</td></tr>');
+                return;
+            }
+            var rows = d.rows || [];
+            $('#k-q-meta').text(rows.length + ' 条记录 · ' + (d.log_file || ''));
+            if (!rows.length) {
+                $b.html('<tr><td colspan="8" class="agh-muted">无记录 no records</td></tr>');
+                return;
+            }
+            var html = '';
+            rows.forEach(function (r) {
+                var cached = r.cache === 'true';
+                html += '<tr>' +
+                    '<td class="agh-muted">' + esc(r.time) + '</td>' +
+                    '<td>' + esc(r.client_ip) + '</td>' +
+                    '<td class="k-domain" title="' + esc(r.qname) + '">' + esc(r.qname) + '</td>' +
+                    '<td>' + esc(r.qtype) + '</td>' +
+                    '<td><span class="agh-pill ' + rcodePill(r.rcode) + '">' + esc(r.rcode) + '</span></td>' +
+                    '<td class="agh-muted">' + esc(r.upstream) + '</td>' +
+                    '<td class="num">' + esc(r.latency_ms) + ' ms</td>' +
+                    '<td>' + (cached ? '<span class="agh-pill cache">cache</span>' : '<span class="agh-pill dim">upstream</span>') + '</td>' +
+                    '</tr>';
+            });
+            $b.html(html);
+        });
+    }
+
+    function startDashAuto() {
+        stopDashAuto();
+        if ($('#k-autorefresh').is(':checked')) {
+            dashTimer = setInterval(function () {
+                loadService();
+                loadOverview();
+            }, 5000);
+        }
+    }
+
+    function stopDashAuto() {
+        if (dashTimer) { clearInterval(dashTimer); dashTimer = null; }
+    }
+
+    function startLogAuto() {
+        if (logTimer) { clearInterval(logTimer); logTimer = null; }
+        var ms = parseInt($('#k-q-auto').val(), 10);
+        if (ms > 0) logTimer = setInterval(loadLog, ms);
+    }
+
+    $(document).ready(function () {
+        loadService();
+        loadOverview();
+        startDashAuto();
+        startLogAuto();
+
+        $('#k-refresh').click(function (e) { e.preventDefault(); loadService(); loadOverview(); });
+        $('#k-autorefresh').change(startDashAuto);
+        $('#k-q-refresh').click(loadLog);
+        $('#k-q-auto').change(startLogAuto);
+        $('#k-q-limit').change(loadLog);
+        $('#k-q-domain').on('keyup', function (e) { if (e.which === 13) loadLog(); });
+        $('#k-q-client').on('keyup', function (e) { if (e.which === 13) loadLog(); });
+
+        // load the query log lazily the first time its tab is opened
+        $('a[href="#querylog"]').on('shown.bs.tab', function () { loadLog(); });
+        $('a[href="#dashboard"]').on('shown.bs.tab', function () {
+            if (trendChart) { trendChart.resize(); }
+        });
+    });
 })(jQuery);
 </script>

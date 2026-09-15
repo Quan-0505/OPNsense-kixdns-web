@@ -58,8 +58,7 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 | OPNsense | pkg ABI | package |
 | --- | --- | --- |
 | 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.3-FreeBSD_14_amd64.pkg` |
-| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.3-FreeBSD_15_amd64.pkg` |
-| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.3-FreeBSD_15_aarch64.pkg` |
+| 26.7 & newer | `FreeBSD:15:amd64` | `os-kixdns-community-0.3-FreeBSD_15_amd64.pkg` |
 
 Check with `pkg config abi` if unsure.
 
@@ -73,9 +72,6 @@ pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/
 
 # OPNsense 25.7 / 26.1
 pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_14_amd64.pkg
-
-# OPNsense 26.7+ on arm64 (e.g. NanoPi R4S)
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.3/os-kixdns-community-0.3-FreeBSD_15_aarch64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.

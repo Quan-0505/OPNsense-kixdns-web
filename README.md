@@ -164,7 +164,7 @@ tail -n 50 /var/log/kixdns/kixdns_*.log  # or Services → KixDNS → Log File
 
 ## 🔧 Development
 
-`.github/workflows/build-opnsense.yml` cross-compiles the FreeBSD binary (`cross`, `x86_64-unknown-freebsd`), validates it is a FreeBSD ELF, and packages a `+MANIFEST` with `abi`/`arch`/`annotations`/`files`/`scripts` (format checked against real `os-*` packages), releasing two `.pkg` files (FreeBSD 14/15) on `v*` tags.
+`.github/workflows/build-opnsense.yml` cross-compiles the FreeBSD binary (`cross`, `x86_64-unknown-freebsd` / `aarch64-unknown-freebsd`), validates it is a FreeBSD ELF, and packages a `+MANIFEST` with `abi`/`arch`/`annotations`/`files`/`scripts` (format checked against real `os-*` packages), releasing two `.pkg` files (FreeBSD 14/15) on `v*` tags.
 
 Local checks (run with Python 3.11):
 

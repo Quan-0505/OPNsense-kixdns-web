@@ -19,6 +19,10 @@ env:
   PLUGIN_NAME: "kixdns-community"
   PKG_NAME: "os-kixdns-community"
   KIXDNS_REF: ${{ github.event.inputs.kixdns_ref || 'main' }}
+  # Upstream keeps Cargo.toml at 0.1.0 even for the v0.2.0 tag, so a plain build
+  # reports "kixdns 0.1.0" and builds cannot be told apart. Stamp our own engine
+  # version into the crate before compiling so --version matches what we ship.
+  KIXDNS_ENGINE_VERSION: "0.2.0"
 
 jobs:
   build-binary:
@@ -48,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kixdns-bin/
-          key: kixdns-freebsd-${{ matrix.short }}-${{ steps.kixdns-sha.outputs.sha }}
+          key: kixdns-freebsd-${{ matrix.short }}-${{ steps.kixdns-sha.outputs.sha }}-v${{ env.KIXDNS_ENGINE_VERSION }}
 
       - name: Checkout kixdns
         if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
@@ -78,6 +82,33 @@ jobs:
         if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
         run: |
           command -v cross >/dev/null 2>&1 || cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Stamp engine version into the crate
+        if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'
+        working-directory: kixdns-src
+        run: |
+          python3 - "$KIXDNS_ENGINE_VERSION" <<'PY'
+          import pathlib, re, sys
+          ver = sys.argv[1]
+
+          toml = pathlib.Path("Cargo.toml")
+          src = toml.read_text()
+          new, n = re.subn(r'(?m)^version\s*=\s*"0\.1\.0"\s*$', f'version = "{ver}"', src, count=1)
+          if n != 1:
+              sys.exit("could not find the [package] version line in Cargo.toml")
+          toml.write_text(new)
+
+          lock = pathlib.Path("Cargo.lock")
+          lsrc = lock.read_text()
+          lnew, ln = re.subn(
+              r'(name = "kixdns"\nversion = )"0\.1\.0"', rf'\g<1>"{ver}"', lsrc, count=1)
+          if ln != 1:
+              sys.exit("could not find the kixdns entry in Cargo.lock")
+          lock.write_text(lnew)
+          print(f"stamped engine version {ver}")
+          PY
+          grep -m1 '^version' Cargo.toml
+          grep -A1 'name = "kixdns"' Cargo.lock | head -2
 
       - name: Build (cross, ${{ matrix.target }})
         if: steps.cache-kixdns-bin.outputs.cache-hit != 'true'

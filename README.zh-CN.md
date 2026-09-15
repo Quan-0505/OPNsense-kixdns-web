@@ -118,6 +118,9 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 不确定时用 `pkg config abi` 查看。
 
+> **发布策略：** 本仓库**只保留最新版本的 Release**，被取代的安装包会被移除，因此不提供旧版本存档。
+> 请始终从[最新版本](https://github.com/Quan-0505/OPNsense-kixdns-web/releases/latest)安装。
+
 每个包内附的 kixdns 二进制由本仓库 CI 从**上游 `main`** 交叉编译（`KIXDNS_REF`，默认 `main`），
 因此包跟踪的是最新引擎，而不是最后那个已发版的 tag。
 该二进制在构建时会**注入引擎版本号**，所以即便上游 `Cargo.toml` 仍写着 `0.1.0`，`kixdns --version` 也会报告 `0.2.0`。

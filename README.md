@@ -124,6 +124,10 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 Check with `pkg config abi` if unsure.
 
+> **Release policy:** this repository keeps **only the newest release** — superseded packages are removed,
+> so there is no archive of older versions. Always install from the
+> [latest release](https://github.com/Quan-0505/OPNsense-kixdns-web/releases/latest).
+
 Each package bundles a kixdns binary cross-built from **upstream `main`** by this repository's CI
 (`KIXDNS_REF`, default `main`), so packages track the newest engine rather than the last tagged release.
 The bundled binary is **stamped with the engine version at build time**, so `kixdns --version` reports `0.2.0` even though upstream leaves its own `Cargo.toml` at `0.1.0`.

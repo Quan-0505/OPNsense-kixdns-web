@@ -178,7 +178,7 @@ python build_pkg.py          # build both ABI packages
 
 ## 📚 Documentation
 
-- [DIAGNOSIS.md](DIAGNOSIS.md) — the full defect list found in v0.1 and how each was fixed.
+- [DIAGNOSIS.md](DIAGNOSIS.md) — the full defect list found in v0.1 and how each was fixed · also in [Chinese](DIAGNOSIS.md) / [English](DIAGNOSIS.en.md).
 
 ## 📄 License
 

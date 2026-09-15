@@ -1,5 +1,7 @@
 # 为什么 0.1 版「跑不起来」，以及 0.2 改了什么
 
+**[简体中文](./DIAGNOSIS.md)** &nbsp;|&nbsp; **[English](./DIAGNOSIS.en.md)**
+
 每条结论都对照了真实源码，不是猜的：
 
 * `opnsense/core` master 与 stable/24.7、25.1、25.7（MVC 控制器/模型基类、Router、ACL、configd 模板引擎）

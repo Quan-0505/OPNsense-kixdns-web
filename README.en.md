@@ -83,6 +83,20 @@ The dashboard consumes them and switches to the **observer scope**:
 | Latency | end-to-end, including answers served from cache | upstream round-trip only |
 | Upstream health | per-attempt outcome and latency | response records only |
 
+**Extras on a newer engine.** When the engine's observer interface carries additional fields, the console
+detects the capability and adds these panels; on an older engine they simply do not appear:
+
+| Extra metric | Meaning |
+| --- | --- |
+| In-flight joins | requests that merged with an identical query already in flight — previously invisible in the totals |
+| Cache source | **which upstream** supplied the cached answer |
+| Avg response bytes | mean response size returned to clients |
+| Client rcode | the rcode **actually returned to the client**, including cache hits and rule-synthesised answers, not just the forwarded scope |
+
+The upstream panel's share counts only upstreams that actually **served** a query; fan-out losers (`Aborted`)
+and attempts that never dispatched (`Rejected`/`Error`) are reported separately as outcomes, so one upstream
+is never counted twice.
+
 **Cost and control.** The event stream is verbose — a busy gateway can write 100–250 MB of log per day. Two
 things keep that bounded:
 

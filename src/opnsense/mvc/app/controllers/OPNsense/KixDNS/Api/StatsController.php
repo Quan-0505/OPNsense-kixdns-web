@@ -109,6 +109,20 @@ class StatsController extends ApiControllerBase
         return null;
     }
 
+    /**
+     * The log spells one upstream two ways: observer events carry "1.1.1.1:53"
+     * while forwarded responses carry "udp:1.1.1.1:53". Fold the transport label
+     * away so a single upstream cannot occupy two rows in the Upstreams panel.
+     */
+    private function normalizeUpstream(string $upstream): string
+    {
+        $upstream = trim($upstream);
+        if (preg_match('/^(?:udp6?|tcp6?|dot|doh|doq|quic):(.+)$/i', $upstream, $m)) {
+            return $m[1];
+        }
+        return $upstream;
+    }
+
     private function bump(array &$hash, string $key): void
     {
         if ($key === '') {
@@ -135,6 +149,17 @@ class StatsController extends ApiControllerBase
             'e2e_sum_us' => 0, 'e2e_count' => 0, 'e2e_slow' => 0,
             'up_ok' => 0, 'up_fail' => 0, 'up_sum_us' => 0,
             'req_hourly' => [],
+            // kixdns >= PR #66 observer additions. All optional: an engine that
+            // does not emit them simply leaves these at their empty defaults,
+            // which is how the console stays compatible with the shipped 0.2.0.
+            'cache_source' => [], 'inflight' => 0,
+            'resp_bytes_sum' => 0, 'resp_bytes_count' => 0,
+            'fin_rcode' => [], 'up_outcome' => [],
+            // Two independent upstream counters: the observer one counts only
+            // successful attempts (fan-out losers are Aborted), the forwarded
+            // one counts replies. The API picks whichever matches the active
+            // scope, so a row is never the sum of both.
+            'upstream_obs' => [], 'upstream_fwd' => [],
             'last_ts' => 0,
         ];
     }
@@ -160,7 +185,9 @@ class StatsController extends ApiControllerBase
         // predates this schema
         if (!is_array($state) || ($state['file'] ?? null) !== $file
             || ($state['offset'] ?? 0) > filesize($file)
-            || !array_key_exists('observer', $state)) {
+            || !array_key_exists('observer', $state)
+            || !array_key_exists('cache_source', $state)
+            || !array_key_exists('upstream_obs', $state)) {
             $state = $this->blankState();
         }
         $state['file'] = $file;
@@ -181,6 +208,17 @@ class StatsController extends ApiControllerBase
 
             if (strpos($line, 'event=') === false) {
                 continue;
+            }
+            // tracing writes some values unquoted even when they hold a space
+            // ("rcode=No Error response_bytes=402"). Left alone, the tokenizer
+            // splits at the space, then rejects "Error response_bytes" as a key
+            // and silently swallows the following field. Quote them first.
+            if (strpos($line, 'rcode=') !== false) {
+                $line = preg_replace(
+                    '/\brcode=([A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*)(?= [a-z_]+=|$)/',
+                    'rcode="$1"',
+                    $line
+                );
             }
             $t = $this->tokens($line);
             $event = $t['event'] ?? '';
@@ -208,11 +246,22 @@ class StatsController extends ApiControllerBase
                 case 'cache_hit':
                     $state['observer']++;
                     $state['obs_cache_hit']++;
+                    // PR #66: which upstream's answer this entry came from
+                    if (isset($t['source']) && $t['source'] !== '') {
+                        $this->bump($state['cache_source'], $t['source']);
+                    }
                     break;
 
                 case 'cache_miss':
                     $state['observer']++;
                     $state['obs_cache_miss']++;
+                    break;
+
+                case 'inflight_joined':
+                    // PR #66: this request rode along on an identical query that
+                    // was already in flight, so it produced no upstream event.
+                    $state['observer']++;
+                    $state['inflight']++;
                     break;
 
                 case 'request_finished':
@@ -225,11 +274,24 @@ class StatsController extends ApiControllerBase
                             $state['e2e_slow']++;
                         }
                     }
+                    // PR #66: wire-format response size and the rcode actually
+                    // returned to the client (covers cache hits and synthesised
+                    // answers, which never reach the forwarded view).
+                    if (isset($t['response_bytes']) && ctype_digit($t['response_bytes'])) {
+                        $state['resp_bytes_sum'] += (int)$t['response_bytes'];
+                        $state['resp_bytes_count']++;
+                    }
+                    if (isset($t['rcode']) && $t['rcode'] !== '') {
+                        $this->bump($state['fin_rcode'], $t['rcode']);
+                    }
                     break;
 
                 case 'upstream_result':
                     $state['observer']++;
                     $outcome = strtolower($t['outcome'] ?? '');
+                    if ($outcome !== '') {
+                        $this->bump($state['up_outcome'], $outcome);
+                    }
                     if ($outcome === 'success') {
                         $state['up_ok']++;
                     } else {
@@ -238,8 +300,12 @@ class StatsController extends ApiControllerBase
                     if (isset($t['latency_us']) && ctype_digit($t['latency_us'])) {
                         $state['up_sum_us'] += (int)$t['latency_us'];
                     }
-                    if (isset($t['upstream'])) {
-                        $this->bump($state['upstream'], $t['upstream']);
+                    // Only a successful attempt means "this upstream served the
+                    // query". Counting every attempt here would add the losing
+                    // siblings of a fan-out (outcome=Aborted) and rejected
+                    // attempts, roughly doubling every row and skewing the share.
+                    if ($outcome === 'success' && isset($t['upstream'])) {
+                        $this->bump($state['upstream_obs'], $this->normalizeUpstream($t['upstream']));
                     }
                     break;
 
@@ -269,7 +335,7 @@ class StatsController extends ApiControllerBase
                         $this->bump($state['client'], $t['client_ip']);
                     }
                     if (isset($t['upstream'])) {
-                        $this->bump($state['upstream'], $t['upstream']);
+                        $this->bump($state['upstream_fwd'], $this->normalizeUpstream($t['upstream']));
                     }
                     $hour = $this->hourOf($line);
                     if ($hour !== null) {
@@ -358,6 +424,24 @@ class StatsController extends ApiControllerBase
             'upstream_avg_latency' => ($s['up_ok'] + $s['up_fail']) > 0
                 ? round($s['up_sum_us'] / ($s['up_ok'] + $s['up_fail']) / 1000.0, 2) : null,
 
+            // Engine capabilities added upstream in PR #66. Reported so the
+            // console can show these panels only when the running binary emits
+            // them, keeping one UI for both the shipped and the newer engine.
+            'cache_sources' => $this->top($s['cache_source'], 6),
+            'inflight_joined' => (int)$s['inflight'],
+            'avg_response_bytes' => $s['resp_bytes_count'] > 0
+                ? (int)round($s['resp_bytes_sum'] / $s['resp_bytes_count']) : null,
+            'client_rcode' => (function (array $r) {
+                arsort($r);
+                return $r;
+            })($s['fin_rcode']),
+            'caps' => [
+                'cache_source' => !empty($s['cache_source']),
+                'inflight' => ((int)$s['inflight']) > 0,
+                'response_bytes' => ((int)$s['resp_bytes_count']) > 0,
+                'client_rcode' => !empty($s['fin_rcode']),
+            ],
+
             // forwarded (upstream) view, available without --debug
             'forwarded_total' => $total,
             'forwarded_cached' => (int)$s['cache_hits'],
@@ -371,7 +455,13 @@ class StatsController extends ApiControllerBase
             'rcode' => $rcodes,
             'hourly' => $hist,
             'qtype' => $this->top($s['qtype']),
-            'upstreams' => $this->top($s['upstream']),
+            // one row per upstream that actually served the query in the active scope
+            'upstreams' => $this->top($observer ? $s['upstream_obs'] : $s['upstream_fwd']),
+            // why attempts did not serve: success/aborted(fan-out loser)/rejected/error
+            'upstream_outcomes' => (function (array $r) {
+                arsort($r);
+                return $r;
+            })($s['up_outcome']),
             'top_domains' => $this->top($s['qname']),
             'top_clients' => $this->top($s['client']),
             'log_file' => $s['file'],

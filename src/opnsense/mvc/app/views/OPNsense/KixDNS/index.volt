@@ -1162,13 +1162,26 @@ var KixDNSEditor = (function($) {
                 $('#k-scope').text('原生观测 observer');
                 $('#k-c1-label').text('客户端请求 Client queries');
                 $('#k-total').text(num(d.requests));
-                $('#k-total-sub').text(num(d.cache_hits) + ' 命中 / ' + num(d.cache_misses) + ' 回源');
+                var tsub = num(d.cache_hits) + ' 命中 / ' + num(d.cache_misses) + ' 回源';
+                if (d.caps && d.caps.inflight) {
+                    tsub += ' / ' + num(d.inflight_joined) + ' 合并';
+                }
+                $('#k-total-sub').text(tsub);
                 $('#k-c2-label').text('缓存命中率 Cache hit ratio');
                 $('#k-domains').text(d.cache_hit_ratio === null ? '\u2013' : d.cache_hit_ratio + '%');
-                $('#k-domains-sub').text(num(d.unique_domains) + ' 个唯一域名');
+                var csub = num(d.unique_domains) + ' 个唯一域名';
+                var srcs = d.cache_sources || [];
+                if (d.caps && d.caps.cache_source && srcs.length) {
+                    csub += ' · 缓存来源 ' + srcs[0].name + (srcs.length > 1 ? ' 等 ' + srcs.length + ' 个上游' : '');
+                }
+                $('#k-domains-sub').text(csub);
                 $('#k-c3-label').text('端到端延迟 End-to-end');
                 $('#k-latency').text(d.e2e_avg_latency === null ? '\u2013' : d.e2e_avg_latency);
-                $('#k-latency-sub').text('ms（含缓存命中；上游 ' + (d.upstream_avg_latency === null ? '-' : d.upstream_avg_latency) + ' ms）');
+                var lsub = 'ms（含缓存命中；上游 ' + (d.upstream_avg_latency === null ? '-' : d.upstream_avg_latency) + ' ms）';
+                if (d.caps && d.caps.response_bytes && d.avg_response_bytes !== null) {
+                    lsub += ' · 应答均 ' + d.avg_response_bytes + ' B';
+                }
+                $('#k-latency-sub').text(lsub);
                 $('#k-c4-label').text('慢查询 Slow >500ms');
                 $('#k-slow').text(num(d.e2e_slow));
                 $('#k-slow-sub').text(d.requests > 0 ? (Math.round(1000 * d.e2e_slow / d.requests) / 10) + '% of requests' : '');

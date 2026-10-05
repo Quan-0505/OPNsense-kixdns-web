@@ -133,9 +133,9 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 | OPNsense | pkg ABI | 包名 |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.1-FreeBSD_14_amd64.pkg` |
-| 26.7 及更新（amd64） | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.1-FreeBSD_15_amd64.pkg` |
-| 26.7 及更新（arm64） | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.1-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.2-FreeBSD_14_amd64.pkg` |
+| 26.7 及更新（amd64） | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.2-FreeBSD_15_amd64.pkg` |
+| 26.7 及更新（arm64） | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.2-FreeBSD_15_aarch64.pkg` |
 
 不确定时用 `pkg config abi` 查看。
 
@@ -152,13 +152,13 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.1/os-kixdns-community-0.5.1-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.1/os-kixdns-community-0.5.1-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ arm64（如 NanoPi R4S）
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.1/os-kixdns-community-0.5.1-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_15_aarch64.pkg
 ```
 
 安装后的钩子会自动重启 `configd`、执行迁移并重载 `OPNsense/KixDNS` 与 `OPNsense/Syslog` 模板 —— 无需手动重启服务。

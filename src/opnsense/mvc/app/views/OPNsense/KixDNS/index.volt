@@ -1186,20 +1186,24 @@ var KixDNSEditor = (function($) {
                 $('#k-slow').text(num(d.e2e_slow));
                 $('#k-slow-sub').text(d.requests > 0 ? (Math.round(1000 * d.e2e_slow / d.requests) / 10) + '% of requests' : '');
             } else {
-                // info-level fallback: forwarded (upstream) responses only
+                // info-level fallback. Older engines log dns_response only for
+                // forwarded (upstream) answers; the reworked engine logs one for
+                // every client request, cache hits included, so the same numbers
+                // mean something different and the labels have to follow.
+                var fwdFull = !!(d.caps && d.caps.forwarded_includes_cache);
                 $('#k-scope').text('日志口径 forwarded（开启 Debug 可得原生观测）');
-                $('#k-c1-label').text('转发查询 Forwarded queries');
+                $('#k-c1-label').text(fwdFull ? '客户端应答 Client responses' : '转发查询 Forwarded queries');
                 $('#k-total').text(num(d.forwarded_total));
-                $('#k-total-sub').text('回源转发（缓存命中不在此口径内）');
+                $('#k-total-sub').text(fwdFull ? '全部客户端应答（含缓存命中）' : '回源转发（缓存命中不在此口径内）');
                 $('#k-c2-label').text('唯一域名 Unique domains');
                 $('#k-domains').text(num(d.unique_domains));
                 $('#k-domains-sub').text(num(d.cache_hits) + ' 条响应被缓存');
-                $('#k-c3-label').text('回源延迟 Upstream latency');
+                $('#k-c3-label').text(fwdFull ? '应答延迟 Response latency' : '回源延迟 Upstream latency');
                 $('#k-latency').text(d.avg_latency);
-                $('#k-latency-sub').text('ms（仅回源请求）');
+                $('#k-latency-sub').text(fwdFull ? 'ms（含缓存命中）' : 'ms（仅回源请求）');
                 $('#k-c4-label').text('慢查询 Slow >500ms');
                 $('#k-slow').text(num(d.slow_queries));
-                $('#k-slow-sub').text(d.forwarded_total > 0 ? (Math.round(1000 * d.slow_queries / d.forwarded_total) / 10) + '% of forwarded' : '');
+                $('#k-slow-sub').text(d.forwarded_total > 0 ? (Math.round(1000 * d.slow_queries / d.forwarded_total) / 10) + '% of ' + (fwdFull ? 'responses' : 'forwarded') : '');
             }
             $('#k-generated').text('更新 ' + (d.generated || '').replace('T', ' ').substring(0, 19));
             $('#k-logfile').text(d.log_file || '');

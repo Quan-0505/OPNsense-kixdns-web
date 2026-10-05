@@ -97,6 +97,18 @@ The upstream panel's share counts only upstreams that actually **served** a quer
 and attempts that never dispatched (`Rejected`/`Error`) are reported separately as outcomes, so one upstream
 is never counted twice.
 
+**Engine version compatibility.** The log format has been evolving, and the plugin reads both spellings, so it
+works against different engine versions:
+
+* **Cache flag** — older engines write `cache=true`, the reworked one writes `cache_hit=true`; both are read.
+* **Answer source** — the reworked engine puts **non-server** values in the `upstream` field: `inflight` (the
+  answer was piggybacked onto an identical request already in flight) and `static` (synthesised by a rule).
+  Neither is counted as an upstream; they are reported separately under `answer_sources`.
+* **Rcode** — one log can contain both `NoError` and `No Error`; the console folds them onto `No Error`.
+* **Scope shift** — the reworked engine logs one `dns_response` for **every** client request, cache hits
+  included, so with Debug off the "forwarded" scope really means "all client responses". The console switches
+  to the matching labels instead of mislabelling the numbers.
+
 **Cost and control.** The event stream is verbose — a busy gateway can write 100–250 MB of log per day. Two
 things keep that bounded:
 

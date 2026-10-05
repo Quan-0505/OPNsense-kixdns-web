@@ -41,6 +41,10 @@ class StatsController extends ApiControllerBase
     private const CACHE_TTL = 15;      // seconds a cached aggregation stays fresh
     private const TOPN = 10;
     private const MAX_KEYS = 20000;     // cap per counter hash to bound memory
+    // Values the engine puts in `upstream` that name something other than a
+    // server: an answer that was piggybacked onto another request, one produced
+    // by a rule, or one replayed from cache.
+    private const NON_UPSTREAM_SOURCES = ['inflight', 'static', 'stale', 'cache', 'none'];
 
     private function newestLog(): ?string
     {
@@ -113,14 +117,66 @@ class StatsController extends ApiControllerBase
      * The log spells one upstream two ways: observer events carry "1.1.1.1:53"
      * while forwarded responses carry "udp:1.1.1.1:53". Fold the transport label
      * away so a single upstream cannot occupy two rows in the Upstreams panel.
+     *
+     * Returns null when the value names something that is not a server at all:
+     * the reworked engine reports answers served by piggybacking on another
+     * request ("inflight") or synthesised from a rule ("static") in the very
+     * same field, and those must not appear as upstreams.
      */
-    private function normalizeUpstream(string $upstream): string
+    private function normalizeUpstream(string $upstream): ?string
     {
         $upstream = trim($upstream);
+        if ($upstream === '') {
+            return null;
+        }
+        if (in_array(strtolower($upstream), self::NON_UPSTREAM_SOURCES, true)) {
+            return null;
+        }
         if (preg_match('/^(?:udp6?|tcp6?|dot|doh|doq|quic):(.+)$/i', $upstream, $m)) {
-            return $m[1];
+            $upstream = $m[1];
         }
         return $upstream;
+    }
+
+    /**
+     * Count an answer source, sending non-server values to their own counter
+     * instead of into the upstream ranking.
+     */
+    private function bumpSource(array &$state, string $source, string $upstreamKey): void
+    {
+        $name = $this->normalizeUpstream($source);
+        if ($name === null) {
+            $this->bump($state['answer_source'], strtolower(trim($source)));
+            return;
+        }
+        $this->bump($state[$upstreamKey], $name);
+    }
+
+    /**
+     * The engine writes the same rcode two ways across events ("NoError" on
+     * dns_response, "No Error" on request_finished) and older builds spell the
+     * NXDOMAIN family differently. Fold them onto one label so the console does
+     * not list one code twice.
+     */
+    private function canonicalRcode(string $rcode): string
+    {
+        $key = strtolower(trim($rcode));
+        $map = [
+            'noerror' => 'No Error',
+            'no error' => 'No Error',
+            'formerr' => 'Format Error',
+            'format error' => 'Format Error',
+            'servfail' => 'Server Failure',
+            'server failure' => 'Server Failure',
+            'nxdomain' => 'Non-Existent Domain',
+            'non-existent domain' => 'Non-Existent Domain',
+            'non-existent' => 'Non-Existent Domain',
+            'notimpl' => 'Not Implemented',
+            'not implemented' => 'Not Implemented',
+            'refused' => 'Query Refused',
+            'query refused' => 'Query Refused',
+        ];
+        return $map[$key] ?? trim($rcode);
     }
 
     private function bump(array &$hash, string $key): void
@@ -160,6 +216,7 @@ class StatsController extends ApiControllerBase
             // one counts replies. The API picks whichever matches the active
             // scope, so a row is never the sum of both.
             'upstream_obs' => [], 'upstream_fwd' => [],
+            'answer_source' => [], 'fwd_full' => 0,
             'last_ts' => 0,
         ];
     }
@@ -187,7 +244,9 @@ class StatsController extends ApiControllerBase
             || ($state['offset'] ?? 0) > filesize($file)
             || !array_key_exists('observer', $state)
             || !array_key_exists('cache_source', $state)
-            || !array_key_exists('upstream_obs', $state)) {
+            || !array_key_exists('upstream_obs', $state)
+            || !array_key_exists('answer_source', $state)
+            || !array_key_exists('fwd_full', $state)) {
             $state = $this->blankState();
         }
         $state['file'] = $file;
@@ -282,7 +341,7 @@ class StatsController extends ApiControllerBase
                         $state['resp_bytes_count']++;
                     }
                     if (isset($t['rcode']) && $t['rcode'] !== '') {
-                        $this->bump($state['fin_rcode'], $t['rcode']);
+                        $this->bump($state['fin_rcode'], $this->canonicalRcode($t['rcode']));
                     }
                     break;
 
@@ -305,14 +364,24 @@ class StatsController extends ApiControllerBase
                     // siblings of a fan-out (outcome=Aborted) and rejected
                     // attempts, roughly doubling every row and skewing the share.
                     if ($outcome === 'success' && isset($t['upstream'])) {
-                        $this->bump($state['upstream_obs'], $this->normalizeUpstream($t['upstream']));
+                        $this->bumpSource($state, $t['upstream'], 'upstream_obs');
                     }
                     break;
 
                 case 'dns_response':
                     $state['total']++;
-                    if (($t['cache'] ?? '') === 'true') {
+                    // Older engines write cache=true, the reworked one writes
+                    // cache_hit=true (and no longer emits `cache` at all).
+                    $cacheFlag = $t['cache_hit'] ?? $t['cache'] ?? '';
+                    if ($cacheFlag === 'true') {
                         $state['cache_hits']++;
+                    }
+                    // The reworked engine logs one dns_response per client
+                    // request, cache hits included, so this scope stops meaning
+                    // "forwarded only". Record which shape we are reading so the
+                    // console can label the numbers honestly.
+                    if (isset($t['cache_hit'])) {
+                        $state['fwd_full'] = 1;
                     }
                     if (isset($t['latency_ms']) && ctype_digit($t['latency_ms'])) {
                         $ms = (int)$t['latency_ms'];
@@ -323,7 +392,7 @@ class StatsController extends ApiControllerBase
                         }
                     }
                     if (isset($t['rcode'])) {
-                        $this->bump($state['rcode'], $t['rcode']);
+                        $this->bump($state['rcode'], $this->canonicalRcode($t['rcode']));
                     }
                     if (isset($t['qname'])) {
                         $this->bump($state['qname'], $t['qname']);
@@ -335,7 +404,7 @@ class StatsController extends ApiControllerBase
                         $this->bump($state['client'], $t['client_ip']);
                     }
                     if (isset($t['upstream'])) {
-                        $this->bump($state['upstream_fwd'], $this->normalizeUpstream($t['upstream']));
+                        $this->bumpSource($state, $t['upstream'], 'upstream_fwd');
                     }
                     $hour = $this->hourOf($line);
                     if ($hour !== null) {
@@ -440,6 +509,7 @@ class StatsController extends ApiControllerBase
                 'inflight' => ((int)$s['inflight']) > 0,
                 'response_bytes' => ((int)$s['resp_bytes_count']) > 0,
                 'client_rcode' => !empty($s['fin_rcode']),
+                'forwarded_includes_cache' => ((int)$s['fwd_full']) > 0,
             ],
 
             // forwarded (upstream) view, available without --debug
@@ -462,6 +532,8 @@ class StatsController extends ApiControllerBase
                 arsort($r);
                 return $r;
             })($s['up_outcome']),
+            // answers that no upstream produced (piggybacked / rule-synthesised)
+            'answer_sources' => $this->top($s['answer_source']),
             'top_domains' => $this->top($s['qname']),
             'top_clients' => $this->top($s['client']),
             'log_file' => $s['file'],

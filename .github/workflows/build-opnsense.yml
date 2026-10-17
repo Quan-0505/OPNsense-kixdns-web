@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  PLUGIN_VERSION: "0.5.3"
+  PLUGIN_VERSION: "0.5.4"
   PLUGIN_NAME: "kixdns-community"
   PKG_NAME: "os-kixdns-community"
   KIXDNS_REF: ${{ github.event.inputs.kixdns_ref || 'main' }}
@@ -160,6 +160,11 @@ jobs:
       - name: Checkout plugin
         uses: actions/checkout@v4
 
+      - name: Test log retention and install hooks
+        run: |
+          python3 tests/test_log_retention.py
+          sh -n ./+POST_INSTALL ./+POST_DEINSTALL
+
       - name: Download binary
         uses: actions/download-artifact@v4
         with:
@@ -197,7 +202,7 @@ jobs:
 
           find stage -type d -exec chmod 0755 {} +
           find stage -type f -exec chmod 0644 {} +
-          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns
+          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns stage/usr/local/sbin/kixdns-log-prune
           find stage -type f | sort
 
       - name: Build +MANIFEST

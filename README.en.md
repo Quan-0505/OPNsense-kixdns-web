@@ -31,6 +31,8 @@
 
 ## OPNsense 26.7.7 compatibility verification
 
+v0.5.4 caps KixDNS logs at 64 MiB, pruning the oldest closed logs or compressed archives every five minutes and rotating individual files at 5 MiB; the active log is preserved first.
+
 v0.5.3 fixes a false-success result when the engine exits immediately after Apply, for example because a listening port is occupied. Settings and the Pipeline Editor now show backend error details. Installation of the v0.5.2 baseline package and tests of the v0.5.3 candidate source passed in an isolated OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 VM; see the [compatibility record](docs/opnsense-26.7.7.md).
 
 Legacy standalone deployments using `daemon -p ... -r` may stop only the child while leaving a supervisor that restarts it. Their service scripts differ from the current package. Do not overwrite an active legacy script or replace a custom engine without a planned migration. See the [compatibility record](docs/opnsense-26.7.7.md) for scope, limitations and regression commands. These tests did not upgrade or change production gateways.
@@ -44,7 +46,7 @@ Legacy standalone deployments using `daemon -p ... -r` may stop only the child w
 - 📊 **AdGuardHome-style console** — A dashboard with query statistics, trend chart and Top-N tables, plus a filterable live query log (see [Web console](#web-console)).
 - 🎛️ **Service control** — start/stop/restart with a live status light, shown next to the runtime takeover mode and version.
 - 🔬 **Diagnostics** — The settings page reports `kixdns --version` at runtime, so missing binaries / wrong ABI are visible before you touch the pipeline.
-- 📜 **Log rotation** — Built-in newsyslog config rotates `/var/log/kixdns/*.log` daily (7 gzip copies) — logs never grow unbounded.
+- 📜 **Log rotation** — Logs have a 64 MiB total budget; the oldest closed logs or compressed archives are pruned every 5 minutes, while newsyslog rotates an individual file when it reaches 5 MiB.
 - 📄 **ACL + log viewer** — Ships an ACL so non-admin users can be granted access, and a **Log File** menu entry that streams the kixdns log straight into the GUI.
 
 ## 📊 Web console
@@ -115,10 +117,9 @@ works against different engine versions:
   included, so with Debug off the "forwarded" scope really means "all client responses". The console switches
   to the matching labels instead of mislabelling the numbers.
 
-**Cost and control.** The event stream is verbose — a busy gateway can write 100–250 MB of log per day. Two
-things keep that bounded:
+**Cost and control.** The observer event stream can be verbose. A 64 MiB total log budget and the following rotation rules keep it bounded:
 
-* the bundled newsyslog rule rotates daily **and** at 200 MB per file, keeping 3 compressed copies (~600 MB ceiling);
+* newsyslog rotates a file at **5 MiB**; a five-minute cleanup job removes the oldest closed logs or compressed archives to hold the directory at **64 MiB**;
 * `kixdns_debug_log_level` in `/etc/rc.conf.d/kixdns` sets the `RUST_LOG` filter used while Debug is on. The
   default is `info,kixdns::observe=debug`, which keeps the observer events and drops the rest of the debug
   stream. Set it to `debug` only when debugging the engine itself.
@@ -150,9 +151,9 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 | OPNsense | pkg ABI | package |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg` |
-| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg` |
-| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.4-FreeBSD_14_amd64.pkg` |
+| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.4-FreeBSD_15_amd64.pkg` |
+| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.4-FreeBSD_15_aarch64.pkg` |
 
 Check with `pkg config abi` if unsure.
 
@@ -170,13 +171,13 @@ The bundled binary is **stamped with the engine version at build time**, so `kix
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.4/os-kixdns-community-0.5.4-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.4/os-kixdns-community-0.5.4-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ on arm64 (e.g. NanoPi R4S)
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.4/os-kixdns-community-0.5.4-FreeBSD_15_aarch64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.

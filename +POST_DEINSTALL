@@ -5,4 +5,13 @@ if [ -f /usr/local/etc/rc.d/configd ]; then /usr/local/etc/rc.d/configd restart;
 
 rm -f /etc/rc.conf.d/kixdns
 
+KIXDNS_LOG_CRON='*/5 * * * * root /usr/local/sbin/kixdns-log-prune >/dev/null 2>&1'
+if [ -f /etc/crontab ] && grep -Fqx "$KIXDNS_LOG_CRON" /etc/crontab; then
+	TMP=$(mktemp /etc/.crontab-kixdns.XXXXXX) || exit 1
+	awk -v job="$KIXDNS_LOG_CRON" '$0 != job { print }' /etc/crontab > "$TMP"
+	chown root:wheel "$TMP"
+	chmod "$(stat -f '%Lp' /etc/crontab)" "$TMP"
+	mv -f "$TMP" /etc/crontab
+fi
+
 exit 0

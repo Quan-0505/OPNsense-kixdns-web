@@ -16,4 +16,10 @@ if [ -f /usr/local/etc/rc.configure_plugins ]; then echo "Reloading plugin confi
 if [ -f /usr/local/sbin/configctl ]; then echo -n "Reloading template OPNsense/KixDNS: "; /usr/local/sbin/configctl template reload OPNsense/KixDNS; fi
 if [ -f /usr/local/sbin/configctl ]; then echo -n "Reloading template OPNsense/Syslog: "; /usr/local/sbin/configctl template reload OPNsense/Syslog; fi
 
+# Keep all dated KixDNS log files within the packaged 64 MiB budget.
+KIXDNS_LOG_CRON='*/5 * * * * root /usr/local/sbin/kixdns-log-prune >/dev/null 2>&1'
+if [ -f /etc/crontab ] && ! grep -Fqx "$KIXDNS_LOG_CRON" /etc/crontab; then
+	printf '%s\n' "$KIXDNS_LOG_CRON" >> /etc/crontab
+fi
+
 exit 0

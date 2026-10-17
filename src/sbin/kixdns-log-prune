@@ -1,0 +1,77 @@
+#!/usr/local/bin/python3
+"""Keep KixDNS log storage below a fixed budget, preserving the active log."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+try:
+    import syslog
+except ImportError:  # Keep the helper's tests runnable on Windows hosts.
+    syslog = None
+
+LOG_DIR = Path("/var/log/kixdns")
+MAX_BYTES = 64 * 1024 * 1024
+
+
+def enforce_budget(log_dir: Path = LOG_DIR, max_bytes: int = MAX_BYTES, dry_run: bool = False) -> dict:
+    if not log_dir.exists():
+        return {"bytes_after": 0, "removed": [], "dry_run": dry_run}
+    files = [p for p in log_dir.iterdir() if p.is_file() and not p.is_symlink()]
+    total = sum(p.stat().st_size for p in files)
+    active_log = max(
+        (p for p in files if p.name.endswith(".log")),
+        key=lambda p: (p.stat().st_mtime_ns, p.name),
+        default=None,
+    )
+    prunable = sorted(
+        (p for p in files if p.name.endswith(".gz") or (p.name.endswith(".log") and p != active_log)),
+        key=lambda p: (p.stat().st_mtime_ns, p.name),
+    )
+    prunable_bytes = sum(p.stat().st_size for p in prunable)
+    if total - prunable_bytes > max_bytes:
+        raise RuntimeError(
+            f"KixDNS active log and non-prunable files exceed budget ({total - prunable_bytes} > {max_bytes})"
+        )
+    removed = []
+    for path in prunable:
+        if total <= max_bytes:
+            break
+        try:
+            size = path.stat().st_size
+            if not dry_run:
+                path.unlink()
+            total -= size
+            removed.append((path.name, size))
+        except FileNotFoundError:
+            continue
+    if total > max_bytes:
+        raise RuntimeError(f"KixDNS log directory exceeds budget after pruning ({total} > {max_bytes})")
+    return {"bytes_after": total, "removed": removed, "dry_run": dry_run}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    try:
+        result = enforce_budget(dry_run=args.dry_run)
+    except RuntimeError as exc:
+        if syslog is not None:
+            syslog.syslog(syslog.LOG_ERR, str(exc))
+        else:
+            print(f"kixdns-log-prune: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if result["removed"]:
+        action = "would remove" if args.dry_run else "removed"
+        print(
+            f"KixDNS log budget: {result['bytes_after']} bytes; "
+            f"{action} {len(result['removed'])} oldest closed log files or archives"
+        )
+    if result["bytes_after"] > MAX_BYTES:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

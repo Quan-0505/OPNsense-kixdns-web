@@ -31,6 +31,8 @@
 
 ## OPNsense 26.7.7 兼容性验证
 
+v0.5.4 为 KixDNS 日志设置 64 MiB 总预算，每 5 分钟清理最旧的已关闭日志或压缩归档，并由 newsyslog 在单文件达到 5 MiB 时轮转；当前日志优先保留。
+
 v0.5.3 修复应用后引擎因端口占用等原因立即退出、界面却报告成功的问题，并在设置页与管道编辑器显示后端错误详情。基于 v0.5.2 包的安装验证和 v0.5.3 候选源码测试已在隔离的 OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 环境完成，见[兼容性记录](docs/opnsense-26.7.7.md)。
 
 旧版独立部署的 `daemon -p ... -r` 启动脚本可能只停止子进程，留下自动重启的父进程；它与当前插件包的服务脚本不同。不要直接覆盖正在运行的旧脚本或替换自定义引擎。测试范围、限制与回归命令见 [兼容性记录](docs/opnsense-26.7.7.md)。本记录不代表已升级或修改生产网关。
@@ -44,7 +46,7 @@ v0.5.3 修复应用后引擎因端口占用等原因立即退出、界面却报�
 - 📊 **AdGuardHome 风格控制台** —— 仪表盘（查询统计、趋势图、Top-N 榜单）+ 可过滤的实时查询日志（见 [Web 控制台](#-web-控制台)）。
 - 🎛️ **服务控制** —— 启动/停止/重启，带实时状态指示灯，旁边显示运行时的接管方式与版本。
 - 🔬 **诊断信息** —— 设置页实时上报 `kixdns --version`，在动管道之前就能发现二进制缺失 / ABI 不匹配。
-- 📜 **日志轮转** —— 内置 newsyslog 配置，`/var/log/kixdns/*.log` 每日轮转（gzip 保留），日志不会无限增长。
+- 📜 **日志轮转** —— 日志占用上限 64 MiB；每 5 分钟清理最旧的已关闭日志或压缩归档，newsyslog 在单文件达到 5 MiB 时轮转。
 - 📄 **ACL + 日志查看** —— 附带 ACL 以便为普通用户授权，并在菜单提供 **Log File** 入口，把 kixdns 日志直接呈现在 GUI 中。
 
 ## 📊 Web 控制台
@@ -107,9 +109,9 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 * **口径变化**：新引擎对**每个**客户端请求都记录一条 `dns_response`（含缓存命中），因此未开 Debug 时的
   「转发口径」实际含义是「全部客户端应答」，界面会自动切换到对应标签，不会张冠李戴。
 
-**代价与控制。** 事件流较为冗长 —— 繁忙网关每天可写入 100–250 MB 日志。下面两点把它压在可控范围内：
+**代价与控制。** 事件流较为冗长 —— 繁忙网关的观测事件流可能产生大量日志。日志总量上限为 64 MiB，并按以下规则持续回收：
 
-* 内置的 newsyslog 规则**每日轮转**，并且单文件达到 **200 MB** 时也轮转，保留 3 份压缩副本（上限约 600 MB）；
+* newsyslog 在单文件达到 **5 MiB** 时轮转；每 5 分钟清理最旧的已关闭日志或压缩归档，日志目录最多 **64 MiB**；
 * `/etc/rc.conf.d/kixdns` 中的 `kixdns_debug_log_level` 决定 Debug 开启时使用的 `RUST_LOG` 过滤器，默认
   `info,kixdns::observe=debug`：保留观测事件、丢弃其余调试流。只有在内核本身排障时才设为 `debug`。
 
@@ -139,9 +141,9 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 | OPNsense | pkg ABI | 包名 |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg` |
-| 26.7 及更新（amd64） | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg` |
-| 26.7 及更新（arm64） | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.4-FreeBSD_14_amd64.pkg` |
+| 26.7 及更新（amd64） | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.4-FreeBSD_15_amd64.pkg` |
+| 26.7 及更新（arm64） | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.4-FreeBSD_15_aarch64.pkg` |
 
 不确定时用 `pkg config abi` 查看。
 
@@ -158,13 +160,13 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.4/os-kixdns-community-0.5.4-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.4/os-kixdns-community-0.5.4-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ arm64（如 NanoPi R4S）
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.4/os-kixdns-community-0.5.4-FreeBSD_15_aarch64.pkg
 ```
 
 安装后的钩子会自动重启 `configd`、执行迁移并重载 `OPNsense/KixDNS` 与 `OPNsense/Syslog` 模板 —— 无需手动重启服务。

@@ -29,6 +29,12 @@
 
 ---
 
+## OPNsense 26.7.7 compatibility verification
+
+The v0.5.2 package was tested in an isolated OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 VM: installation, management APIs, repeated Apply, service lifecycle and UDP/TCP DNS passed. Current source adds a short process check after Apply to detect an engine that exits on a busy port, and shows backend failure details in Settings and the Pipeline Editor.
+
+Legacy standalone deployments using `daemon -p ... -r` may stop only the child while leaving a supervisor that restarts it. Their service scripts differ from the current package. Do not overwrite an active legacy script or replace a custom engine without a planned migration. See the [compatibility record](docs/opnsense-26.7.7.md) for scope, limitations and regression commands. These tests did not upgrade or change production gateways.
+
 ## ✨ Features
 
 - 🦀 **Rust core** — Powered by [KixDNS](https://github.com/olicesx/kixdns): Tokio-based zero-copy UDP, async I/O and a pipeline rule engine for high-QPS forwarding.

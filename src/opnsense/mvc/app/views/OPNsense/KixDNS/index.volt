@@ -368,7 +368,7 @@ $(document).ready(function() {
                     BootstrapDialog.show({
                         type: BootstrapDialog.TYPE_DANGER,
                         title: "{{ lang._('Error reconfiguring KixDNS') }}",
-                        message: "{{ lang._('The service did not apply the configuration. Check Services - KixDNS - Log File.') }}",
+                        message: $('<div/>').text((data && data.status_msg) || "{{ lang._('The service did not apply the configuration. Check Services - KixDNS - Log File.') }}"),
                         buttons: [{ label: "{{ lang._('Close') }}", action: function(d) { d.close(); } }]
                     });
                 }
@@ -833,7 +833,7 @@ var KixDNSEditor = (function($) {
                         BootstrapDialog.show({
                             type: BootstrapDialog.TYPE_DANGER,
                             title: 'Error',
-                            message: 'Saved, but applying failed. Check Services - KixDNS - Log File.',
+                            message: $('<div/>').text((data && data.status_msg) || 'Saved, but applying failed. Check Services - KixDNS - Log File.'),
                             buttons: [{ label: 'Close', action: function(d) { d.close(); } }]
                         });
                     }

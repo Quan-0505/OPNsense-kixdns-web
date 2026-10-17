@@ -31,7 +31,7 @@
 
 ## OPNsense 26.7.7 兼容性验证
 
-已在隔离的 OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 环境验证 v0.5.2 安装、管理 API、连续应用、启停和 UDP/TCP DNS。当前源码增加应用后的短时进程检查，避免端口冲突导致引擎退出却显示成功，并在设置页与管道编辑器显示后端失败原因。
+v0.5.3 修复应用后引擎因端口占用等原因立即退出、界面却报告成功的问题，并在设置页与管道编辑器显示后端错误详情。基于 v0.5.2 包的安装验证和 v0.5.3 候选源码测试已在隔离的 OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 环境完成，见[兼容性记录](docs/opnsense-26.7.7.md)。
 
 旧版独立部署的 `daemon -p ... -r` 启动脚本可能只停止子进程，留下自动重启的父进程；它与当前插件包的服务脚本不同。不要直接覆盖正在运行的旧脚本或替换自定义引擎。测试范围、限制与回归命令见 [兼容性记录](docs/opnsense-26.7.7.md)。本记录不代表已升级或修改生产网关。
 
@@ -139,9 +139,9 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 | OPNsense | pkg ABI | 包名 |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.2-FreeBSD_14_amd64.pkg` |
-| 26.7 及更新（amd64） | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.2-FreeBSD_15_amd64.pkg` |
-| 26.7 及更新（arm64） | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.2-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg` |
+| 26.7 及更新（amd64） | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg` |
+| 26.7 及更新（arm64） | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg` |
 
 不确定时用 `pkg config abi` 查看。
 
@@ -158,13 +158,13 @@ event="cache_hit"        request_id=42 kind=Fresh remaining_ttl_s=10
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ arm64（如 NanoPi R4S）
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg
 ```
 
 安装后的钩子会自动重启 `configd`、执行迁移并重载 `OPNsense/KixDNS` 与 `OPNsense/Syslog` 模板 —— 无需手动重启服务。

@@ -31,7 +31,7 @@
 
 ## OPNsense 26.7.7 compatibility verification
 
-The v0.5.2 package was tested in an isolated OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 VM: installation, management APIs, repeated Apply, service lifecycle and UDP/TCP DNS passed. Current source adds a short process check after Apply to detect an engine that exits on a busy port, and shows backend failure details in Settings and the Pipeline Editor.
+v0.5.3 fixes a false-success result when the engine exits immediately after Apply, for example because a listening port is occupied. Settings and the Pipeline Editor now show backend error details. Installation of the v0.5.2 baseline package and tests of the v0.5.3 candidate source passed in an isolated OPNsense 26.7.7 / FreeBSD 15.1-p4 / PHP 8.5.11 VM; see the [compatibility record](docs/opnsense-26.7.7.md).
 
 Legacy standalone deployments using `daemon -p ... -r` may stop only the child while leaving a supervisor that restarts it. Their service scripts differ from the current package. Do not overwrite an active legacy script or replace a custom engine without a planned migration. See the [compatibility record](docs/opnsense-26.7.7.md) for scope, limitations and regression commands. These tests did not upgrade or change production gateways.
 
@@ -150,9 +150,9 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 | OPNsense | pkg ABI | package |
 | --- | --- | --- |
-| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.2-FreeBSD_14_amd64.pkg` |
-| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.2-FreeBSD_15_amd64.pkg` |
-| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.2-FreeBSD_15_aarch64.pkg` |
+| 25.7 / 26.1 | `FreeBSD:14:amd64` | `os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg` |
+| 26.7 & newer (amd64) | `FreeBSD:15:amd64` | `os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg` |
+| 26.7 & newer (arm64) | `FreeBSD:15:aarch64` | `os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg` |
 
 Check with `pkg config abi` if unsure.
 
@@ -170,13 +170,13 @@ The bundled binary is **stamped with the engine version at build time**, so `kix
 
 ```sh
 # OPNsense 26.7+
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_15_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_amd64.pkg
 
 # OPNsense 25.7 / 26.1
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_14_amd64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_14_amd64.pkg
 
 # OPNsense 26.7+ on arm64 (e.g. NanoPi R4S)
-pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.2/os-kixdns-community-0.5.2-FreeBSD_15_aarch64.pkg
+pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/v0.5.3/os-kixdns-community-0.5.3-FreeBSD_15_aarch64.pkg
 ```
 
 The post-install hook restarts `configd`, runs migrations, and reloads the `OPNsense/KixDNS` + `OPNsense/Syslog` templates automatically — no manual service restart required.

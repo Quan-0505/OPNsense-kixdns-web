@@ -157,9 +157,8 @@ A query enters the pipeline and is routed by `pipeline_select`; each rule can fo
 
 Check with `pkg config abi` if unsure.
 
-> **Release policy:** this repository keeps **only the newest release** — superseded packages are removed,
-> so there is no archive of older versions. Always install from the
-> [latest release](https://github.com/Quan-0505/OPNsense-kixdns-web/releases/latest).
+> **Release policy:** this repository keeps the two newest releases; older releases and their assets are removed once they fall outside that window. The latest available release is v0.5.4.
+> Install from the [latest release](https://github.com/Quan-0505/OPNsense-kixdns-web/releases/latest).
 
 Each package bundles a kixdns binary cross-built from **upstream `main`** by this repository's CI
 (`KIXDNS_REF`, default `main`), so packages track the newest engine rather than the last tagged release.

@@ -1,4 +1,4 @@
-name: Build OPNsense Plugin
+﻿name: Build OPNsense Plugin
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  PLUGIN_VERSION: "0.5.5"
+  PLUGIN_VERSION: "0.5.6"
   PLUGIN_NAME: "kixdns-community"
   PKG_NAME: "os-kixdns-community"
   KIXDNS_REF: ${{ github.event.inputs.kixdns_ref || 'main' }}
@@ -202,7 +202,7 @@ jobs:
 
           find stage -type d -exec chmod 0755 {} +
           find stage -type f -exec chmod 0644 {} +
-          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns stage/usr/local/sbin/kixdns-log-prune stage/usr/local/sbin/kixdns-fusion-alert
+          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns stage/usr/local/sbin/kixdns-log-prune stage/usr/local/sbin/kixdns-fusion-alert stage/usr/local/sbin/kixdns-app-block
           find stage -type f | sort
 
       - name: Build +MANIFEST

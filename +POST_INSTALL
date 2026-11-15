@@ -30,4 +30,13 @@ if [ -f /etc/crontab ] && ! grep -Fqx "$KIXDNS_FUSION_CRON" /etc/crontab; then
 	printf '%s\n' "$KIXDNS_FUSION_CRON" >> /etc/crontab
 fi
 
+# app-level blocking bridge: refresh the pf alias from appdpi's identification
+# table once a minute. No-ops unless /usr/local/etc/kixdns-app-block.json says
+# "enabled": true, so installing this changes nothing by itself.
+chmod 0755 /usr/local/sbin/kixdns-app-block 2>/dev/null
+KIXDNS_APPBLOCK_CRON='*/1 * * * * root /usr/local/sbin/kixdns-app-block >/dev/null 2>&1'
+if [ -f /etc/crontab ] && ! grep -Fqx "$KIXDNS_APPBLOCK_CRON" /etc/crontab; then
+	printf '%s\n' "$KIXDNS_APPBLOCK_CRON" >> /etc/crontab
+fi
+
 exit 0

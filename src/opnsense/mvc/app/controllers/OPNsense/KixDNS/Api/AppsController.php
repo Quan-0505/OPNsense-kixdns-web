@@ -492,11 +492,90 @@ class AppsController extends ApiControllerBase
         foreach ($idx['suffix'] as $suf => $id) {
             $out[(int)$id][] = (string)$suf;
         }
+        // [subkeys] is a second, independent source: a main domain there carries
+        // main_app=0 ("the domain alone means nothing") but every subkey row has
+        // the real app_id. That is exactly why blocking Bilibili by rules alone
+        // left i0.hdslb.com reachable — hdslb.com has no [rules] row at all.
+        foreach ($this->subkeySuffixes() as $id => $list) {
+            foreach ($list as $suf) {
+                $out[$id][] = $suf;
+            }
+        }
         foreach ($out as &$list) {
+            $list = array_values(array_unique($list));
             sort($list);
         }
         unset($list);
         return $out;
+    }
+
+    /**
+     * app_id => [main domains] taken from the [subkeys] section.
+     *
+     * Columns: subkey_id, main_domain, main_app, pattern, app_id, match, segment
+     * `main_app` is 0 for all of them (by design), so the app comes from column 5.
+     * One main domain can serve several apps (hdslb.com: upos-/static/bimp/
+     * activity -> 878, dl -> 910), which means blocking 878 also blocks 910's
+     * subkey — acceptable for a per-app block, and reported by sharedSuffixes().
+     */
+    private function subkeySuffixes(): array
+    {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+        $cache = [];
+        if (!is_readable(self::RULEPACK)) {
+            return $cache;
+        }
+        $fh = @fopen(self::RULEPACK, 'r');
+        if ($fh === false) {
+            return $cache;
+        }
+        $section = '';
+        while (($line = fgets($fh)) !== false) {
+            $line = rtrim($line, "\r\n");
+            if ($line === '') {
+                continue;
+            }
+            if ($line[0] === '[') {
+                $section = strtolower(trim($line, "[] \t"));
+                continue;
+            }
+            if ($section !== 'subkeys') {
+                continue;
+            }
+            $f = explode("\t", $line);
+            if (count($f) < 5) {
+                continue;
+            }
+            $appId = (int)$f[4];
+            $suf = ltrim(strtolower(trim($f[1])), '.');
+            if ($appId <= 0 || $suf === '' || strpos($suf, '.') === false) {
+                continue;
+            }
+            $cache[$appId][$suf] = true;
+        }
+        fclose($fh);
+        foreach ($cache as $id => $set) {
+            $cache[$id] = array_keys($set);
+        }
+        return $cache;
+    }
+
+    /** suffix => other app ids that also claim it through [subkeys] */
+    private function sharedSuffixes(): array
+    {
+        $map = [];
+        foreach ($this->subkeySuffixes() as $id => $list) {
+            foreach ($list as $suf) {
+                $map[$suf][$id] = true;
+            }
+        }
+        foreach ($map as $suf => $ids) {
+            $map[$suf] = array_keys($ids);
+        }
+        return $map;
     }
 
     private function lookup(string $dom, array $idx): int

@@ -108,11 +108,11 @@ foreach (($data['insights'] ?? []) as $ins) {
     if (!in_array($kind, $conf['kinds'], true)) {
         continue;
     }
-    // the subject is the leading part of the sentence up to the first space that
-    // carries an address/list; collapsing to kind+first token keeps repeated
-    // findings on the same key while still letting a new device through
+    // The cooldown key must stay ASCII: cutting a Chinese sentence at a fixed
+    // byte offset can split a UTF-8 sequence, and json_encode() then fails
+    // silently, leaving an empty state file (so every cron run re-alerts).
     $text = (string)($ins['text'] ?? '');
-    $key = $kind . '|' . substr(preg_replace('/\s+/', ' ', $text), 0, 60);
+    $key = $kind . '|' . md5(preg_replace('/\s+/', ' ', $text));
     if (isset($state[$key]) && ($now - (int)$state[$key]) < $cooldown) {
         $skipped++;
         continue;

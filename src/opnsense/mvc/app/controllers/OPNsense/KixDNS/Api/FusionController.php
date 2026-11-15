@@ -77,6 +77,7 @@ class FusionController extends ApiControllerBase
 
         $dnsApp = [];          // app_id => ['queries'=>int,'domains'=>hash,'top'=>[]]
         $domainRows = [];
+        $conflicts = [];       // appdpi says unknown, the rulepack disagrees
         $srcMix = ['dpi' => 0, 'rule' => 0, 'loose' => 0, 'none' => 0];
 
         // --- domain table: kixdns query volume joined with appdpi observation --
@@ -84,12 +85,11 @@ class FusionController extends ApiControllerBase
             $hit = $this->classifyDomain((string)$qname, $index, $dpi);
             $obs = $dpi['domains'][$qname] ?? null;
             $appId = $hit['app_id'];
-            if ($appId === 0 && $obs !== null && (int)$obs['app_id'] > 0) {
-                $appId = (int)$obs['app_id'];
-                $hit['src'] = 'dpi';
-            }
             $srcMix[$hit['src']] = ($srcMix[$hit['src']] ?? 0) + 1;
-            $appName = $appId > 0 ? ($index['apps'][$appId] ?? $this->dpiAppName($dpi, $appId)) : '';
+            $appName = $this->appName($appId, $index, $dpi);
+            if ($hit['conflict']) {
+                $conflicts[(string)$qname] = $this->appName($hit['rule_app_id'], $index, $dpi);
+            }
             if ($appId > 0) {
                 if (!isset($dnsApp[$appId])) {
                     $dnsApp[$appId] = ['queries' => 0, 'domains' => 0, 'top' => []];
@@ -106,6 +106,8 @@ class FusionController extends ApiControllerBase
                 'app_id' => $appId,
                 'app' => $appName,
                 'src' => $hit['src'],
+                'rule_app' => $hit['conflict'] ? $conflicts[(string)$qname] : '',
+                'conflict' => $hit['conflict'],
                 'dpi_hits' => $obs !== null ? (int)$obs['hits'] : 0,
                 'dpi_bytes' => $obs !== null ? (int)$obs['bytes'] : 0,
             ];
@@ -121,7 +123,7 @@ class FusionController extends ApiControllerBase
             $dnsRec = $dnsApp[$appId] ?? null;
             $appRows[] = [
                 'app_id' => $appId,
-                'name' => $rec['name'],
+                'name' => $rec['name'] !== '' ? $rec['name'] : $this->appName($appId, $index, $dpi),
                 'flows' => $rec['flows'],
                 'bytes' => $rec['bytes'],
                 'dns_queries' => $dnsRec !== null ? $dnsRec['queries'] : 0,
@@ -136,7 +138,7 @@ class FusionController extends ApiControllerBase
             }
             $appRows[] = [
                 'app_id' => $appId,
-                'name' => $index['apps'][$appId] ?? ('#' . $appId),
+                'name' => $this->appName($appId, $index, $dpi),
                 'flows' => 0,
                 'bytes' => 0,
                 'dns_queries' => $dnsRec['queries'],
@@ -166,16 +168,10 @@ class FusionController extends ApiControllerBase
             if ($c !== null) {
                 foreach ($this->topHash($c['dom'], self::PER_DEV_TOP) as $q => $n) {
                     $hit = $this->classifyDomain((string)$q, $index, $dpi);
-                    if ($hit['app_id'] === 0) {
-                        $obs = $dpi['domains'][$q] ?? null;
-                        $hit['app_id'] = $obs !== null ? (int)$obs['app_id'] : 0;
-                    }
                     $topDomains[] = [
                         'q' => (string)$q,
                         'n' => $n,
-                        'app' => $hit['app_id'] > 0
-                            ? ($index['apps'][$hit['app_id']] ?? $this->dpiAppName($dpi, $hit['app_id']))
-                            : '',
+                        'app' => $this->appName($hit['app_id'], $index, $dpi),
                     ];
                 }
             }
@@ -191,7 +187,7 @@ class FusionController extends ApiControllerBase
                 'conns' => $d['conns'] ?? 0,
                 'online_ms' => $d['online_ms'] ?? 0,
                 'top_app' => $d !== null && (int)$d['top_app'] > 0
-                    ? ($index['apps'][(int)$d['top_app']] ?? $this->dpiAppName($dpi, (int)$d['top_app']))
+                    ? $this->appName((int)$d['top_app'], $index, $dpi)
                     : '',
                 'apps' => $dpi['dev_apps'][$ip] ?? [],
                 'dns_queries' => $queries,
@@ -208,15 +204,14 @@ class FusionController extends ApiControllerBase
         $devRows = array_slice($devRows, 0, self::TOP_DEV);
 
         // --- unmatched domains: the rulepack's blind spot --------------------
+        // A name appdpi explicitly lists with app_id 0 is *not* a rulepack blind
+        // spot: the engine already ruled on it and appdpi wins. Only names the
+        // engine never mentioned, and that no rule covers, land here.
         $unmatched = [];
         $unmatchedQueries = 0;
         foreach ($scan['domains'] as $qname => $rec) {
-            $appId = $this->classifyDomain((string)$qname, $index, $dpi)['app_id'];
-            if ($appId === 0) {
-                $obs = $dpi['domains'][$qname] ?? null;
-                if ($obs !== null && (int)$obs['app_id'] > 0) {
-                    continue;
-                }
+            $hit = $this->classifyDomain((string)$qname, $index, $dpi);
+            if ($hit['app_id'] === 0 && $hit['src'] !== 'dpi') {
                 $unmatched[$qname] = $rec['n'];
                 $unmatchedQueries += $rec['n'];
             }
@@ -260,6 +255,13 @@ class FusionController extends ApiControllerBase
             'apps' => $appRows,
             'unmatched' => $unmatchedTop,
             'insights' => $insights,
+            'conflicts' => (function (array $c) {
+                $out = [];
+                foreach (array_slice($c, 0, 10, true) as $q => $ruleApp) {
+                    $out[] = ['q' => (string)$q, 'rule_app' => $ruleApp];
+                }
+                return $out;
+            })($conflicts),
             'warnings' => $warnings,
         ];
     }
@@ -376,38 +378,75 @@ class FusionController extends ApiControllerBase
     }
 
     /**
-     * Domain -> app. Checks every label boundary of the name against the suffix
-     * table (longest first, which is the most specific rule), then the substring
-     * fallback list. Returns ['app_id'=>int,'src'=>'rule|loose|none'].
+     * Domain -> app.
+     *
+     * Precedence is fixed by policy: **wherever appdpi has an opinion, appdpi
+     * wins.** The engine's own observed domain table is therefore consulted
+     * first and its answer is used verbatim — including "app_id = 0, I do not
+     * know this name", which is an opinion and must not be overruled by our
+     * suffix table. The rulepack is only a fallback for names the engine has
+     * never listed (its table is capped by --top).
+     *
+     * Returns:
+     *   app_id      final answer
+     *   src         dpi | rule | loose | none
+     *   rule_app_id what the suffix table alone would have said
+     *   conflict    true when appdpi says unknown but the rulepack disagrees
      */
     private function classifyDomain(string $qname, array $index, array $dpi): array
     {
         $d = strtolower(rtrim(trim($qname), '.'));
         if ($d === '' || $d === '*' || ctype_digit(str_replace('.', '', $d))) {
-            return ['app_id' => 0, 'src' => 'none'];
+            return ['app_id' => 0, 'src' => 'none', 'rule_app_id' => 0, 'conflict' => false];
         }
-        // the engine's own observation wins when it has one
-        if (isset($dpi['domains'][$d]) && (int)$dpi['domains'][$d]['app_id'] > 0) {
-            return ['app_id' => (int)$dpi['domains'][$d]['app_id'], 'src' => 'dpi'];
+        list($ruleId, $ruleSrc) = $this->ruleAppId($d, $index);
+
+        if (isset($dpi['domains'][$d])) {
+            $dpiId = (int)$dpi['domains'][$d]['app_id'];
+            return [
+                'app_id' => $dpiId,
+                'src' => 'dpi',
+                'rule_app_id' => $ruleId,
+                'conflict' => ($dpiId === 0 && $ruleId > 0),
+            ];
         }
+        if ($ruleId > 0) {
+            return [
+                'app_id' => $ruleId,
+                'src' => $ruleSrc,
+                'rule_app_id' => $ruleId,
+                'conflict' => false,
+            ];
+        }
+        return ['app_id' => 0, 'src' => 'none', 'rule_app_id' => 0, 'conflict' => false];
+    }
+
+    /**
+     * Suffix-table lookup only: every label boundary of the name against the
+     * exact suffix map (most specific first), then the substring fallback list.
+     *
+     * @return array [int app_id, string src]
+     */
+    private function ruleAppId(string $d, array $index): array
+    {
         if (!empty($index['suffix'])) {
             $parts = explode('.', $d);
             $n = count($parts);
             for ($i = 0; $i < $n - 1; $i++) {
                 $suf = implode('.', array_slice($parts, $i));
                 if (isset($index['suffix'][$suf])) {
-                    return ['app_id' => (int)$index['suffix'][$suf], 'src' => 'rule'];
+                    return [(int)$index['suffix'][$suf], 'rule'];
                 }
             }
         }
         if (!empty($index['loose'])) {
             foreach ($index['loose'] as $pat => $appId) {
                 if (strpos($d, (string)$pat) !== false) {
-                    return ['app_id' => (int)$appId, 'src' => 'loose'];
+                    return [(int)$appId, 'loose'];
                 }
             }
         }
-        return ['app_id' => 0, 'src' => 'none'];
+        return [0, 'none'];
     }
 
     /* ------------------------------------------------------------------ */
@@ -494,12 +533,23 @@ class FusionController extends ApiControllerBase
         return $out;
     }
 
-    private function dpiAppName(array $dpi, int $appId): string
+    /**
+     * App label with the agreed precedence: appdpi's dictionary first (it is the
+     * engine that classified the flow), the rulepack second (only for app ids
+     * the engine never emitted — its apps[] is capped by --top), then the raw id.
+     */
+    private function appName(int $appId, array $index, array $dpi): string
     {
-        if (isset($dpi['apps'][$appId]['name'])) {
+        if ($appId <= 0) {
+            return '';
+        }
+        if (isset($dpi['apps'][$appId]['name']) && (string)$dpi['apps'][$appId]['name'] !== '') {
             return (string)$dpi['apps'][$appId]['name'];
         }
-        return $appId > 0 ? ('#' . $appId) : '';
+        if (isset($index['apps'][$appId])) {
+            return (string)$index['apps'][$appId];
+        }
+        return '#' . $appId;
     }
 
     private function leaseNames(): array
@@ -825,15 +875,31 @@ class FusionController extends ApiControllerBase
         // otherwise inflate the "rulepack is blind" number
         $denom = max(1, (int)$scan['total'] - (int)($scan['noise'] ?? 0));
 
-        // 1. heavy traffic but almost no DNS -> DoH / hardcoded IP / proxy
+        // 1. heavy traffic with little or no DNS.
+        //    Split in two: a client that never asked us at all is usually simply
+        //    on another segment (or has its own resolver), while a client that
+        //    asked a couple of times and then moved megabytes almost certainly
+        //    switched to DoH/hardcoded IPs. Only the second case is an alarm.
         foreach ($devices as $d) {
             $bytes = (int)$d['in_bytes'] + (int)$d['out_bytes'];
-            if ($bytes >= 3 * 1024 * 1024 && (int)$d['dns_queries'] <= 3) {
+            if ($bytes < 3 * 1024 * 1024) {
+                continue;
+            }
+            $q = (int)$d['dns_queries'];
+            $label = $d['ip'] . ($d['hostname'] !== '' ? ' (' . $d['hostname'] . ')' : '');
+            if ($q === 0) {
+                $out[] = [
+                    'level' => 'info', 'kind' => 'dns-less',
+                    'text' => $label . ' 窗口内流量 ' . $this->humanBytes($bytes)
+                        . ' 但一次都没向本解析器查询 — 跨网段、自带 DNS，或完全不依赖本机解析',
+                ];
+                continue;
+            }
+            if ($q <= 3) {
                 $out[] = [
                     'level' => 'warn', 'kind' => 'doh',
-                    'text' => $d['ip'] . ($d['hostname'] !== '' ? ' (' . $d['hostname'] . ')' : '')
-                        . ' 窗口内流量 ' . $this->humanBytes($bytes) . '，DNS 查询仅 '
-                        . (int)$d['dns_queries'] . ' 次 — 疑似 DoH/硬编码 IP 或走了代理',
+                    'text' => $label . ' 窗口内流量 ' . $this->humanBytes($bytes) . '，DNS 查询仅 '
+                        . $q . ' 次 — 疑似 DoH/硬编码 IP 或走了代理',
                 ];
             }
         }

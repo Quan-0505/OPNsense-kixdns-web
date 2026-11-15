@@ -107,7 +107,75 @@ appdpi 未安装时页面自动降级为 DNS 单边视图并给出提示；两�
 
 > 数据源：`/var/log/kixdns/kixdns_*.log`（尾部窗口）、`/var/run/appdpi/status.json`（引擎原子替换的快照）、
 > `/usr/local/share/appdpi/panabit.rulepack`（域名规则 + 应用字典）、`/var/run/appdpi/leases.txt`（主机名回落）。
-> 全部只读，不改配置、不重启服务。
+> **查看动作全部只读**：不改配置、不重启服务。
+
+### 判定优先级：两边都有时以 appdpi 为准
+
+融合页把这条规则写死在代码里（`FusionController::classifyDomain`）：
+
+| 字段 | 谁说了算 | 说明 |
+| --- | --- | --- |
+| 域名属于哪个应用 | **appdpi**（`domains[]` 观察表，含它判"未识别"） | 引擎的观察表里出现的名字，一律采用引擎的结论，**不再被规则库推翻**；只有引擎从未列过的名字（它的表被 `--top` 截断）才回落到 rulepack 后缀表 |
+| 应用名 | **appdpi**（`apps[].name`） | 引擎没输出的 app id 才用 rulepack 的 `name_zh` |
+| 设备身份 / MAC / 主机名 / 流量 / 连接数 / Top 应用 | **appdpi** | kixdns 只补 DNS 查询数、唯一域名数、NXDOMAIN 数 |
+| DNS 查询数 / 唯一域名 / 响应码 / 延迟 / 缓存命中 / 上游 | **kixdns** | appdpi 完全没有这些维度 |
+| 域名流量字节 / 命中次数 | **appdpi** | kixdns 只看解析，不看字节 |
+
+两边**判断冲突**时（appdpi 说未识别、规则库有归属），域名行会显示 `未识别 ⚠` 并在 tooltip 里写明规则库的结论 ——
+分歧不隐藏，但口径以 appdpi 为准。
+
+### 三个落地动作（都要显式触发，不会自己动手）
+
+**1. 应用级 DNS 封堵**（`POST /api/kixdns/apps/block`）
+
+kixdns 在 DNS 层，拿到"域名 → 应用"之后就能按应用封，比在流量层丢包更早生效。页面底部勾选应用 →
+**预览**（只返回将要插入的规则）→ **写入并重载**（真正改 `config_json` 并 `kixdns restart`，DNS 中断约 1 秒）。
+生成的规则形如：
+
+```json
+{"name":"APP封堵: 小米 (#2121)",
+ "matchers":[{"type":"domain_suffix","operator":"or","value":"mi.com"}, ...],
+ "matcher_operator":"or",
+ "actions":[{"type":"static_response","rcode":"NXDOMAIN"}]}
+```
+
+同一应用的旧封堵规则会被替换（幂等）；写入前旧管线 JSON 存到 `/tmp/kixdns_pipeline_before_block.json`。
+默认封掉一个应用会连带它的 CDN 域名（如小米 = mi.com/miui.com/mi-img.com/xiaomi.com… 共 7 个后缀），
+所以**先预览再写入**。
+
+**2. 回灌 appdpi**（`POST /api/kixdns/apps/feed`）
+
+`--top` 截断了 appdpi 的域名表，而 DNS 侧看得见全量。这个动作把 **DNS 侧发现、引擎没列出、但注册域已归属某应用**
+的名字推断出来，写成 appdpi 认的两种格式：
+
+- `/var/run/appdpi/kixdns-feed.rules` — 旧 CSV：`app <id> <name>` + `rule domain suffix <x> app <id> prio 900`
+- `/var/run/appdpi/panabit+kixdns.rulepack` — 原 rulepack 抄本，把上述记录追加进 `[rules]` 段
+
+⚠ appdpi **不支持同时加载** `--rules` 与 `--rulepack`（`main.c:3358` 二选一），所以要用合并版 rulepack 并在重启
+appdpi 后生效；不动转发，`block-mode` 仍是 `none`。
+
+**3. 异常告警**（`/usr/local/sbin/kixdns-fusion-alert`，cron 每 10 分钟）
+
+告警判定复用页面同一份洞察逻辑（CLI 里直接调 `FusionController::overviewAction()`，不存在第二套规则）。
+同类发现 6 小时冷却，状态存 `/var/db/kixdns-fusion-alert.state.json`。三条出口：
+
+- `/var/log/kixdns-fusion-alert.log`
+- syslog（`logger -t kixdns-fusion`，会出现在 OPNsense 日志查看器里）
+- 可选 webhook：`/usr/local/etc/kixdns-fusion-alert.json`
+
+```json
+{
+  "enabled": true,
+  "kinds": ["doh", "nxdomain", "dns-only", "bypass", "poll", "concentration"],
+  "min_queries": 200,
+  "webhook_url": "",
+  "webhook_format": "json",
+  "cooldown_s": 21600
+}
+```
+
+手动试跑：`/usr/local/sbin/kixdns-fusion-alert --dry-run`（只看不发）、`--window 67108864`（换扫描窗口）、
+`--reset`（清冷却状态）。configd action 也注册了：`configctl kixdns fusion_alert_dry`。
 
 ## 🔭 原生可观测性
 

@@ -22,4 +22,12 @@ if [ -f /etc/crontab ] && ! grep -Fqx "$KIXDNS_LOG_CRON" /etc/crontab; then
 	printf '%s\n' "$KIXDNS_LOG_CRON" >> /etc/crontab
 fi
 
+# DNS x DPI fusion alert check: every 10 minutes, notify on new findings.
+# Honours /usr/local/etc/kixdns-fusion-alert.json (enabled / kinds / webhook_url).
+chmod 0755 /usr/local/sbin/kixdns-fusion-alert 2>/dev/null
+KIXDNS_FUSION_CRON='*/10 * * * * root /usr/local/sbin/kixdns-fusion-alert >/dev/null 2>&1'
+if [ -f /etc/crontab ] && ! grep -Fqx "$KIXDNS_FUSION_CRON" /etc/crontab; then
+	printf '%s\n' "$KIXDNS_FUSION_CRON" >> /etc/crontab
+fi
+
 exit 0

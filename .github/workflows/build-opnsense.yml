@@ -1,4 +1,4 @@
-﻿name: Build OPNsense Plugin
+name: Build OPNsense Plugin
 
 on:
   push:
@@ -202,7 +202,7 @@ jobs:
 
           find stage -type d -exec chmod 0755 {} +
           find stage -type f -exec chmod 0644 {} +
-          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns stage/usr/local/sbin/kixdns-log-prune
+          chmod 0755 stage/usr/local/bin/kixdns stage/usr/local/etc/rc.d/kixdns stage/usr/local/sbin/kixdns-log-prune stage/usr/local/sbin/kixdns-fusion-alert
           find stage -type f | sort
 
       - name: Build +MANIFEST

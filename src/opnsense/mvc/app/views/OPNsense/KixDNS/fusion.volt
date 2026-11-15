@@ -147,6 +147,65 @@
         </div>
         <div class="fx-panel-body"><div class="fx-chips" id="fx-unmatched"><span class="fx-muted">…</span></div></div>
     </div>
+
+    <div class="fx-panel">
+        <div class="fx-panel-head">
+            <span><i class="fa fa-ban"></i> 应用封堵（DNS 层）</span>
+            <span class="fx-muted">按 appdpi 的应用身份，在 DNS 层把它的全部域名后缀一次性封掉</span>
+        </div>
+        <div class="fx-panel-body">
+            <div class="fx-toolbar">
+                <select id="fx-block-rcode" class="form-control input-sm">
+                    <option value="NXDOMAIN">NXDOMAIN（域不存在）</option>
+                    <option value="NOERROR">NOERROR（空应答）</option>
+                    <option value="REFUSED">REFUSED（拒绝）</option>
+                </select>
+                <button id="fx-block-preview" class="btn btn-default btn-sm"><i class="fa fa-eye"></i> 预览规则</button>
+                <button id="fx-block-apply" class="btn btn-danger btn-sm"><i class="fa fa-shield"></i> 写入并重载 kixdns</button>
+                <span class="fx-chip" id="fx-block-state">…</span>
+            </div>
+            <div id="fx-block-out" class="fx-muted" style="margin-bottom:8px;">勾选应用后先预览，确认无误再写入</div>
+            <table class="fx-table" id="fx-apps-table">
+                <thead><tr>
+                    <th style="width:30px;"><input type="checkbox" id="fx-apps-all"></th>
+                    <th>应用</th><th class="num">流量</th><th class="num">域名后缀</th>
+                    <th>后缀样例</th><th>状态</th>
+                </tr></thead>
+                <tbody><tr><td colspan="6" class="fx-muted">…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="fx-panel">
+        <div class="fx-panel-head">
+            <span><i class="fa fa-share-square-o"></i> 回灌 appdpi（生成它的规则格式）</span>
+            <span class="fx-muted">把 DNS 侧看到、引擎没列出的名字写成 appdpi 规则，绕开 --top 截断</span>
+        </div>
+        <div class="fx-panel-body">
+            <div class="fx-toolbar">
+                <button id="fx-feed-run" class="btn btn-primary btn-sm"><i class="fa fa-flask"></i> 生成注入文件</button>
+                <span class="fx-chip" id="fx-feed-state">未生成</span>
+            </div>
+            <div id="fx-feed-out" class="fx-muted">生成 <code>/var/run/appdpi/kixdns-feed.rules</code>（旧 CSV 格式）
+                与 <code>/var/run/appdpi/panabit+kixdns.rulepack</code>（合并版 rulepack）。appdpi 不支持同时加载
+                <code>--rules</code> 与 <code>--rulepack</code>，所以要用合并版并重启 appdpi 才生效。</div>
+        </div>
+    </div>
+
+    <div class="fx-panel">
+        <div class="fx-panel-head">
+            <span><i class="fa fa-bell-o"></i> 异常告警（cron 每 10 分钟）</span>
+            <span class="fx-muted">同一类发现在 6 小时内不重复报</span>
+        </div>
+        <div class="fx-panel-body">
+            <div class="fx-toolbar">
+                <button id="fx-alert-test" class="btn btn-default btn-sm"><i class="fa fa-stethoscope"></i> 试运行（只看不发）</button>
+                <span class="fx-chip">配置 <code>/usr/local/etc/kixdns-fusion-alert.json</code></span>
+                <span class="fx-chip">日志 <code>/var/log/kixdns-fusion-alert.log</code></span>
+            </div>
+            <pre id="fx-alert-out" style="max-height:200px;overflow:auto;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px;color:#4a5568;">…</pre>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -283,7 +342,10 @@
         var dhtml = doms.map(function (x) {
             var srcTag = x.app
                 ? '<span class="fx-tag ' + esc(x.src) + '">' + esc(x.app) + '</span>'
-                : '<span class="fx-tag none">未识别</span>';
+                : (x.conflict
+                    ? '<span class="fx-tag none" title="appdpi 判未识别；规则库判为 '
+                      + esc(x.rule_app) + '（以 appdpi 为准）">未识别 ⚠</span>'
+                    : '<span class="fx-tag none">未识别</span>');
             var cons = (x.dpi_bytes > 0 && x.queries > 0)
                 ? '<span class="fx-tag ok">双引擎</span>'
                 : (x.queries > 0 ? '<span class="fx-tag warn">仅 DNS</span>' : '<span class="fx-tag">仅流量</span>');
@@ -339,6 +401,90 @@
             + ' · 未识别 ' + share + '% · ' + num(d.elapsed_ms) + 'ms';
     }
 
+    function postJ(url, data) {
+        return $.ajax({
+            url: url, type: 'POST', data: data, dataType: 'json',
+            headers: { 'X-CSRFToken': (window.csrfToken || '') }
+        });
+    }
+
+    // ---- app blocking (DNS layer) -------------------------------------
+    function loadApps() {
+        $.getJSON('/api/kixdns/apps/list').done(function (d) {
+            var rows = (d.apps || []).map(function (a) {
+                return '<tr>'
+                    + '<td><input type="checkbox" class="fx-app-pick" value="' + a.app_id + '"></td>'
+                    + '<td><strong>' + esc(a.name) + '</strong> <span class="fx-muted">#' + a.app_id + '</span></td>'
+                    + '<td class="num">' + (a.bytes ? hbytes(a.bytes) : '<span class="fx-muted">-</span>') + '</td>'
+                    + '<td class="num">' + num(a.suffix_count) + '</td>'
+                    + '<td>' + ((a.suffixes || []).slice(0, 3).map(function (s) {
+                        return '<span class="fx-tag rule">' + esc(s) + '</span>';
+                    }).join(' ') || '<span class="fx-muted">-</span>') + '</td>'
+                    + '<td>' + (a.blocked
+                        ? '<span class="fx-tag err">已封堵</span>'
+                        : '<span class="fx-muted">-</span>') + '</td>'
+                    + '</tr>';
+            }).join('');
+            document.querySelector('#fx-apps-table tbody').innerHTML = rows ||
+                '<tr><td colspan="6" class="fx-muted">没有数据</td></tr>';
+            document.getElementById('fx-block-state').textContent =
+                '已封堵 ' + (d.blocked_count || 0) + ' 个应用 · 规则来源 ' + (d.pipeline_source || '?');
+        }).fail(function (xhr) {
+            document.querySelector('#fx-apps-table tbody').innerHTML =
+                '<tr><td colspan="6" class="fx-muted">接口失败 ' + esc(xhr.status) + '</td></tr>';
+        });
+    }
+
+    function picked() {
+        return $('.fx-app-pick:checked').map(function () { return this.value; }).get().join(',');
+    }
+
+    function doBlock(mode) {
+        var ids = picked();
+        var out = document.getElementById('fx-block-out');
+        if (!ids) { out.textContent = '先勾选要封堵的应用'; return; }
+        out.textContent = mode === 'apply' ? '写入中…' : '生成预览…';
+        postJ('/api/kixdns/apps/block', {
+            apps: ids, mode: mode,
+            rcode: document.getElementById('fx-block-rcode').value
+        }).done(function (d) {
+            if (d.result === 'failed') { out.textContent = '失败：' + d.message; return; }
+            out.innerHTML = '规则 <b>' + d.rule_count + '</b> 条 · 域名后缀 <b>' + d.suffix_count
+                + '</b> 个 · 目标 pipeline <code>' + esc(d.pipeline) + '</code> · 应答 ' + esc(d.rcode)
+                + (d.result === 'applied'
+                    ? ' · <span class="fx-tag ok">已写入并重载</span> 备份 <code>' + esc(d.backup) + '</code>'
+                    : ' · <span class="fx-tag warn">仅预览，未写入</span>');
+            if (mode === 'apply') { loadApps(); }
+        }).fail(function (xhr) { out.textContent = '接口失败 ' + xhr.status; });
+    }
+
+    // ---- feed back into appdpi ----------------------------------------
+    function runFeed() {
+        var st = document.getElementById('fx-feed-state');
+        var out = document.getElementById('fx-feed-out');
+        st.textContent = '生成中…';
+        postJ('/api/kixdns/apps/feed', {}).done(function (d) {
+            if (d.result === 'failed') { st.textContent = '失败：' + d.message; return; }
+            st.textContent = '已生成 ' + d.rule_lines + ' 条规则';
+            out.innerHTML = '未归属域名 <b>' + d.orphan_domains + '</b> 个，能推断出 <b>'
+                + d.inferred_suffixes + '</b> 个后缀<br>'
+                + '<code>' + esc(d.csv) + '</code>（' + hbytes(d.csv_bytes) + '）<br>'
+                + '<code>' + esc(d.rulepack) + '</code>（' + hbytes(d.rulepack_bytes) + '，含原库全部规则）<br>'
+                + '样例：' + (d.sample || []).map(function (s) {
+                    return '<span class="fx-tag rule">' + esc(s) + '</span>';
+                }).join(' ') + '<br><span class="fx-muted">' + esc(d.note) + '</span>';
+        }).fail(function (xhr) { st.textContent = '接口失败 ' + xhr.status; });
+    }
+
+    // ---- alert checker -------------------------------------------------
+    function runAlertTest() {
+        var out = document.getElementById('fx-alert-out');
+        out.textContent = '运行中…';
+        postJ('/api/kixdns/apps/alerttest', {}).done(function (d) {
+            out.textContent = (d.output || '(无输出)').trim() || '(无输出)';
+        }).fail(function (xhr) { out.textContent = '接口失败 ' + xhr.status; });
+    }
+
     function load() {
         var bytes = document.getElementById('fx-window').value || '16777216';
         var btn = document.getElementById('fx-refresh');
@@ -367,9 +513,24 @@
     $(function () {
         load();
         arm();
+        loadApps();
         document.getElementById('fx-refresh').addEventListener('click', load);
         document.getElementById('fx-window').addEventListener('change', load);
         document.getElementById('fx-auto').addEventListener('change', arm);
+        document.getElementById('fx-block-preview').addEventListener('click', function () {
+            doBlock('preview');
+        });
+        document.getElementById('fx-block-apply').addEventListener('click', function () {
+            if (window.confirm('将把勾选应用的全部域名后缀写成 DNS 封堵规则，并重启 kixdns（DNS 短暂中断约 1 秒）。继续？')) {
+                doBlock('apply');
+            }
+        });
+        document.getElementById('fx-apps-all').addEventListener('change', function () {
+            var on = this.checked;
+            $('.fx-app-pick').each(function () { this.checked = on; });
+        });
+        document.getElementById('fx-feed-run').addEventListener('click', runFeed);
+        document.getElementById('fx-alert-test').addEventListener('click', runAlertTest);
     });
 })();
 </script>

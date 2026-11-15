@@ -277,9 +277,11 @@
         // ---- DPI side -------------------------------------------------
         document.getElementById('fx-kpi-dpi').innerHTML =
             card('dpi', '在线设备', num(dpi.online_devices),
-                 dpi.iface ? ('接口 ' + esc(dpi.iface)) : '') +
+                 'IPv4 ' + num(dpi.online_devices_v4) + ' · IPv6 ' + num(dpi.online_devices_v6)
+                 + ' · 唯一 MAC ' + num(dpi.unique_macs)) +
             card('dpi', '识别应用', num(dpi.apps_detected),
-                 '规则库 ' + num(dpi.apps_loaded) + ' 应用 / ' + num(dpi.rules) + ' 规则') +
+                 '规则库 ' + num(dpi.apps_loaded) + ' 应用 / ' + num(dpi.rules) + ' 规则'
+                 + (dpi.iface ? ' · ' + esc(dpi.iface) : '')) +
             card('dpi', '当前下行', hbps(dpi.bps_in), '') +
             card('dpi', '当前上行', hbps(dpi.bps_out),
                  dpi.status_age_s != null ? ('快照 ' + dpi.status_age_s + 's 前') : '');

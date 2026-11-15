@@ -231,6 +231,13 @@ class FusionController extends ApiControllerBase
                 'apps_loaded' => $index['app_count'],
                 'apps_detected' => count($dpi['apps']),
                 'online_devices' => count($dpi['devices']),
+                // the engine's device table counts every IP it has seen in the
+                // active window, IPv6 link-local included, so the same phone can
+                // appear twice. These two extras make the number readable
+                // without changing it — appdpi's page shows the raw length too.
+                'online_devices_v4' => $dpi['v4'] ?? 0,
+                'online_devices_v6' => $dpi['v6'] ?? 0,
+                'unique_macs' => $dpi['unique_macs'] ?? 0,
                 'bps_in' => $dpi['bps_in'],
                 'bps_out' => $dpi['bps_out'],
                 'status_age_s' => $dpi['age'],
@@ -459,6 +466,7 @@ class FusionController extends ApiControllerBase
             'ok' => false, 'age' => null, 'meta' => [],
             'devices' => [], 'apps' => [], 'dev_apps' => [], 'domains' => [],
             'bps_in' => 0, 'bps_out' => 0, 'mac' => [], 'names' => [],
+            'v4' => 0, 'v6' => 0, 'unique_macs' => 0,
         ];
         if (!is_readable(self::DPI_STATUS)) {
             $warnings[] = 'appdpi is not running (no ' . self::DPI_STATUS . ') — '
@@ -480,8 +488,14 @@ class FusionController extends ApiControllerBase
                 continue;
             }
             $out['devices'][(string)$d['ip']] = $d;
+            if ((int)($d['ipver'] ?? 4) === 6) {
+                $out['v6']++;
+            } else {
+                $out['v4']++;
+            }
             if (!empty($d['mac'])) {
                 $out['mac'][(string)$d['ip']] = (string)$d['mac'];
+                $out['_macs'][strtolower((string)$d['mac'])] = 1;
             }
             $out['bps_in'] += (int)($d['in_bps'] ?? 0);
             $out['bps_out'] += (int)($d['out_bps'] ?? 0);
@@ -530,6 +544,8 @@ class FusionController extends ApiControllerBase
                 $out['names'][$ip] = $name;
             }
         }
+        $out['unique_macs'] = count($out['_macs'] ?? []);
+        unset($out['_macs']);
         return $out;
     }
 

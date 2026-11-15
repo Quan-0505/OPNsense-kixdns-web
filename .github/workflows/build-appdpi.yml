@@ -40,13 +40,24 @@ jobs:
           clang --version | head -2
           ld.lld --version
 
+      - name: Cache FreeBSD sysroot
+        id: sysroot-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/fbsd
+          key: fbsd-sysroot-${{ inputs.freebsd_release }}-v1
+
       - name: Fetch FreeBSD sysroot
+        if: steps.sysroot-cache.outputs.cache-hit != 'true'
         run: |
           set -eu
           curl -fsSL -o /tmp/base.txz \
             "https://download.freebsd.org/releases/amd64/${{ inputs.freebsd_release }}/base.txz"
           sudo mkdir -p /opt/fbsd
           sudo tar -xJf /tmp/base.txz -C /opt/fbsd
+
+      - name: Inspect sysroot
+        run: |
           echo "--- what the base actually ships for pcap ---"
           ls -l /opt/fbsd/usr/include/pcap.h /opt/fbsd/usr/include/pcap/pcap.h 2>/dev/null || true
           ls -l /opt/fbsd/lib/libpcap* /opt/fbsd/usr/lib/libpcap* 2>/dev/null || true
@@ -100,8 +111,11 @@ jobs:
           mkdir -p ../obj
           for f in src/*.c; do
             echo "  cc $(basename "$f")"
+            # -include sys/socket.h: exec.c only includes <arpa/inet.h> and relies
+            # on Linux pulling AF_INET/AF_INET6 in through it; FreeBSD does not.
             clang --target=$TARGET --sysroot=$SYSROOT \
               -O2 -g -std=c11 -Wall -Wextra \
+              -include sys/socket.h \
               -Isrc -I"$SYSROOT/usr/include" \
               -c "$f" -o "../obj/$(basename "$f" .c).o"
           done

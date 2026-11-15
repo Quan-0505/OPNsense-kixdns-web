@@ -1,0 +1,126 @@
+name: Build appdpi (FreeBSD, cross)
+
+# Builds SuLingGG/panabit-appdpi for FreeBSD (OPNsense 26.7 = FreeBSD 15.1) on an
+# Ubuntu runner, using the official FreeBSD base.txz as the cross sysroot.
+#
+# Why here: the kixdns package already needs a FreeBSD cross build, and the
+# appdpi engine this page reads from has to match. Upstream ships OpenWrt SDK
+# builds only, so a FreeBSD binary has to come from somewhere — this runner is
+# that somewhere.
+#
+# The default ref is the last commit the upstream author vouched for; anything
+# newer in that repo is unattended bot work and must not be built.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "panabit-appdpi commit/tag (default = last trusted commit 343e4a0)"
+        required: false
+        default: "343e4a03ce0b22fb9a8717291e27e01349269053"
+      freebsd_release:
+        description: "FreeBSD base.txz release used as sysroot"
+        required: false
+        default: "15.1-RELEASE"
+
+env:
+  APPDFI_REPO: https://github.com/SuLingGG/panabit-appdpi
+
+jobs:
+  cross:
+    name: Cross build appdpi (${{ inputs.freebsd_release }})
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld xz-utils
+          clang --version | head -2
+          ld.lld --version
+
+      - name: Fetch FreeBSD sysroot
+        run: |
+          set -eu
+          curl -fsSL -o /tmp/base.txz \
+            "https://download.freebsd.org/releases/amd64/${{ inputs.freebsd_release }}/base.txz"
+          sudo mkdir -p /opt/fbsd
+          sudo tar -xJf /tmp/base.txz -C /opt/fbsd
+          echo "--- what the base actually ships for pcap ---"
+          ls -l /opt/fbsd/usr/include/pcap.h /opt/fbsd/usr/include/pcap/pcap.h 2>/dev/null || true
+          ls -l /opt/fbsd/lib/libpcap* /opt/fbsd/usr/lib/libpcap* 2>/dev/null || true
+          cat /opt/fbsd/bin/freebsd-version 2>/dev/null || true
+          echo "--- libc for the linker ---"
+          ls -l /opt/fbsd/lib/libc.so* /opt/fbsd/usr/lib/libc.a 2>/dev/null | head -4
+
+      - name: Clone appdpi at the requested ref
+        run: |
+          set -eu
+          git clone "$APPDFI_REPO" appdpi-src
+          cd appdpi-src
+          git checkout "${{ inputs.upstream_ref }}"
+          git log --oneline -1
+          git describe --always --dirty
+
+      - name: Cross compile
+        run: |
+          set -eu
+          SYSROOT=/opt/fbsd
+          TARGET=x86_64-unknown-freebsd15
+          cd appdpi-src
+
+          # the base ships libpcap for tcpdump; link the static archive when
+          # present, otherwise the shared object by exact name (no .so symlink)
+          PCAP=$(ls "$SYSROOT"/usr/lib/libpcap.a "$SYSROOT"/lib/libpcap.a 2>/dev/null | head -1 || true)
+          if [ -z "$PCAP" ]; then
+            PCAP=$(ls "$SYSROOT"/usr/lib/libpcap.so.8 "$SYSROOT"/lib/libpcap.so.8 2>/dev/null | head -1 || true)
+          fi
+          if [ -z "$PCAP" ]; then
+            echo "no libpcap in the base sysroot" >&2
+            exit 1
+          fi
+          echo "linking against: $PCAP"
+
+          mkdir -p ../obj
+          for f in src/*.c; do
+            echo "  cc $(basename "$f")"
+            clang --target=$TARGET --sysroot=$SYSROOT \
+              -O2 -g -std=c11 -Wall -Wextra \
+              -Isrc -I"$SYSROOT/usr/include" \
+              -c "$f" -o "../obj/$(basename "$f" .c).o"
+          done
+
+          clang --target=$TARGET --sysroot=$SYSROOT -fuse-ld=lld \
+            -o appdpi ../obj/*.o "$PCAP"
+
+          echo "--- artifact sanity ---"
+          file appdpi
+          readelf -h appdpi | grep -E 'Class|Machine|OS/ABI'
+          echo "--- dynamic deps (must resolve inside a FreeBSD 15 userland) ---"
+          readelf -d appdpi | grep -E 'NEEDED|RPATH|RUNPATH' || echo "(static)"
+
+      - name: Record checksums and build metadata
+        run: |
+          set -eu
+          cd appdpi-src
+          sha256sum appdpi | tee ../appdpi.sha256
+          {
+            echo "upstream_ref=${{ inputs.upstream_ref }}"
+            echo "upstream_commit=$(git rev-parse HEAD)"
+            echo "freebsd_sysroot=${{ inputs.freebsd_release }}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "compiler=$(clang --version | head -1)"
+            echo "--- file ---"
+            file appdpi
+            echo "--- size ---"
+            ls -l appdpi
+          } > ../appdpi.build.txt
+          cat ../appdpi.build.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appdpi-freebsd-amd64
+          path: |
+            appdpi-src/appdpi
+            appdpi.sha256
+            appdpi.build.txt
+          if-no-files-found: error

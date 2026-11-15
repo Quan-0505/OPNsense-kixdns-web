@@ -111,11 +111,15 @@ jobs:
           mkdir -p ../obj
           for f in src/*.c; do
             echo "  cc $(basename "$f")"
-            # -include sys/socket.h: exec.c only includes <arpa/inet.h> and relies
-            # on Linux pulling AF_INET/AF_INET6 in through it; FreeBSD does not.
+            # Ten of the 26 sources use AF_INET / struct in6_addr / struct
+            # sockaddr_in while only including <arpa/inet.h>, which pulls the
+            # socket headers in on glibc but not on FreeBSD. Pre-including the
+            # network headers is the least invasive way to cross-build the
+            # upstream tree unmodified.
             clang --target=$TARGET --sysroot=$SYSROOT \
               -O2 -g -std=c11 -Wall -Wextra \
-              -include sys/socket.h \
+              -include sys/types.h -include sys/socket.h \
+              -include netinet/in.h -include arpa/inet.h \
               -Isrc -I"$SYSROOT/usr/include" \
               -c "$f" -o "../obj/$(basename "$f" .c).o"
           done

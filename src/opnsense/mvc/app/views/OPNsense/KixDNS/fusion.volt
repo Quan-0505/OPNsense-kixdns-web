@@ -26,13 +26,15 @@
                      color:#2d3748; display:flex; justify-content:space-between; align-items:center; }
     .fx-panel-body { padding:10px 14px; }
     .fx-panel-body.tight { padding:0; }
-    .fx-table { width:100%; font-size:13px; border-collapse:collapse; }
+    .fx-table { width:100%; font-size:13px; border-collapse:collapse; table-layout:fixed; }
     .fx-table th { text-align:left; color:#718096; font-weight:600; font-size:11px; letter-spacing:.3px;
-                   padding:7px 8px; border-bottom:1px solid #edf2f7; white-space:nowrap; }
+                   padding:7px 8px; border-bottom:1px solid #edf2f7; white-space:nowrap;
+                   overflow:hidden; text-overflow:ellipsis; }
     .fx-table td { padding:6px 8px; border-bottom:1px solid #f7fafc; color:#2d3748;
-                   vertical-align:middle; }
+                   vertical-align:middle; overflow:hidden; }
     .fx-table tbody tr:hover td { background:#f7fafc; }
-    .fx-table td.num, .fx-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .fx-table td.num, .fx-table th.num { text-align:right; font-variant-numeric:tabular-nums;
+                                         white-space:nowrap; }
     .fx-table td.mono { font-family:'Consolas','Monaco',monospace; font-size:12px; }
     .fx-bar { height:6px; border-radius:3px; background:#4299e1; display:inline-block; vertical-align:middle; }
     .fx-bar.g { background:#48bb78; }
@@ -46,7 +48,7 @@
     .fx-tag.err { background:#fed7d7; color:#822727; }
     .fx-tag.ok { background:#c6f6d5; color:#22543d; }
     .fx-muted { color:#a0aec0; font-size:12px; }
-    .fx-dom { max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+    .fx-dom { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .fx-ins { border-left:3px solid #4299e1; background:#f7fafc; border-radius:4px;
               padding:8px 12px; margin-bottom:8px; font-size:13px; color:#2d3748; }
     .fx-ins.warn { border-left-color:#ecc94b; background:#fffff0; }
@@ -99,6 +101,11 @@
         </div>
         <div class="fx-panel-body tight">
             <table class="fx-table" id="fx-dev-table">
+                <colgroup>
+                    <col style="width:13%"><col style="width:12%"><col style="width:8%">
+                    <col style="width:8%"><col style="width:9%"><col style="width:9%">
+                    <col style="width:8%"><col style="width:8%"><col style="width:25%">
+                </colgroup>
                 <thead><tr>
                     <th>设备</th><th>MAC</th><th>当前下行</th><th class="num">上行</th>
                     <th>应用 Top</th><th class="num">DNS 查询</th><th class="num">唯一域名</th>
@@ -116,6 +123,11 @@
         </div>
         <div class="fx-panel-body tight">
             <table class="fx-table" id="fx-dom-table">
+                <colgroup>
+                    <col style="width:34%"><col style="width:12%"><col style="width:12%">
+                    <col style="width:9%"><col style="width:9%"><col style="width:11%">
+                    <col style="width:13%">
+                </colgroup>
                 <thead><tr>
                     <th>域名</th><th>应用</th><th class="num">DNS 查询</th><th class="num">客户端</th>
                     <th class="num">DPI 命中</th><th class="num">DPI 流量</th><th>一致性</th>
@@ -132,6 +144,10 @@
         </div>
         <div class="fx-panel-body tight">
             <table class="fx-table" id="fx-app-table">
+                <colgroup>
+                    <col style="width:20%"><col style="width:14%"><col style="width:10%">
+                    <col style="width:10%"><col style="width:10%"><col style="width:36%">
+                </colgroup>
                 <thead><tr>
                     <th>应用</th><th class="num">流量</th><th class="num">连接</th>
                     <th class="num">DNS 查询</th><th class="num">域名数</th><th>域名样本</th>

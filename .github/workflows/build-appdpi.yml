@@ -110,6 +110,11 @@ jobs:
 
           mkdir -p ../obj
           for f in src/*.c; do
+            # bench_main.c is a benchmark harness with its own main(); upstream's
+            # Makefile lists SRCS explicitly for the same reason
+            case "$(basename "$f")" in
+              bench_main.c) echo "  skip $(basename "$f")"; continue ;;
+            esac
             echo "  cc $(basename "$f")"
             # Ten of the 26 sources use AF_INET / struct in6_addr / struct
             # sockaddr_in while only including <arpa/inet.h>, which pulls the

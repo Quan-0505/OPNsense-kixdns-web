@@ -45,7 +45,15 @@ class FusionController extends ApiControllerBase
     private const MAX_BYTES   = 268435456; // 256 MiB hard cap
     private const MIN_BYTES   = 524288;    // 512 KiB floor
 
-    private const SCAN_SCHEMA = 2;         // bump when the scan shape changes
+    private const SCAN_SCHEMA = 3;         // bump when the scan shape changes
+    /**
+     * Only clients inside these segments are counted. The engine sits on a
+     * multi-segment LAN (2/3/4/5/6/30/40/50/172.30), but the operator only wants
+     * the two segments this resolver actually serves; everything else — plus all
+     * IPv6 link-local addresses, which are not in a v4 CIDR — is dropped.
+     */
+    private const DEF_CIDRS = ['192.168.5.0/24', '192.168.50.0/24'];
+    private const FUSION_CONF = '/usr/local/etc/kixdns-fusion.json';
     private const TOP_DOMAINS = 40;        // rows in the fused domain table
     private const TOP_APPS    = 20;        // rows in the fused app table
     private const TOP_DEV     = 80;        // rows in the device table
@@ -71,9 +79,10 @@ class FusionController extends ApiControllerBase
         $t0 = microtime(true);
         $warnings = [];
 
+        $cidrs = $this->filterCidrs();
         $index = $this->ruleIndex($warnings);
-        $dpi = $this->dpiSnapshot($warnings);
-        $scan = $this->scanLog($bytes, $warnings);
+        $dpi = $this->dpiSnapshot($warnings, $cidrs);
+        $scan = $this->scanLog($bytes, $warnings, $cidrs);
 
         $dnsApp = [];          // app_id => ['queries'=>int,'domains'=>hash,'top'=>[]]
         $domainRows = [];
@@ -245,6 +254,7 @@ class FusionController extends ApiControllerBase
             'dns' => [
                 'log_file' => $scan['file'],
                 'window_bytes' => $bytes,
+                'filter_cidrs' => $cidrs,
                 'window_from' => $scan['from'],
                 'window_to' => $scan['to'],
                 'queries' => $scan['total'],
@@ -460,7 +470,7 @@ class FusionController extends ApiControllerBase
     /* appdpi snapshot                                                     */
     /* ------------------------------------------------------------------ */
 
-    private function dpiSnapshot(array &$warnings): array
+    private function dpiSnapshot(array &$warnings, array $cidrs = []): array
     {
         $out = [
             'ok' => false, 'age' => null, 'meta' => [],
@@ -486,6 +496,9 @@ class FusionController extends ApiControllerBase
         foreach ($j['devices'] ?? [] as $d) {
             if (!isset($d['ip'])) {
                 continue;
+            }
+            if ($cidrs && !$this->ipInCidrs((string)$d['ip'], $cidrs)) {
+                continue;   // different segment (or IPv6 link-local): not ours
             }
             $out['devices'][(string)$d['ip']] = $d;
             if ((int)($d['ipver'] ?? 4) === 6) {
@@ -517,6 +530,9 @@ class FusionController extends ApiControllerBase
         foreach ($j['dev_apps'] ?? [] as $r) {
             $ip = (string)($r['dev'] ?? '');
             if ($ip === '') {
+                continue;
+            }
+            if ($cidrs && !$this->ipInCidrs($ip, $cidrs)) {
                 continue;
             }
             $out['dev_apps'][$ip][] = [
@@ -622,7 +638,7 @@ class FusionController extends ApiControllerBase
      * needs: per client, per domain, and the global rcode split. Results are
      * cached for SCAN_TTL seconds keyed on (file, size, window).
      */
-    private function scanLog(int $bytes, array &$warnings): array
+    private function scanLog(int $bytes, array &$warnings, array $cidrs = []): array
     {
         $blank = [
             'file' => null, 'total' => 0, 'noise' => 0, 'rcode' => [],
@@ -640,6 +656,7 @@ class FusionController extends ApiControllerBase
         if (is_readable(self::SCAN_CACHE)) {
             $c = json_decode((string)@file_get_contents(self::SCAN_CACHE), true);
             if (is_array($c) && (int)($c['v'] ?? 0) === self::SCAN_SCHEMA
+                && ($c['filter'] ?? null) === implode(',', $cidrs)
                 && ($c['file'] ?? '') === $file && (int)($c['bytes'] ?? 0) === $bytes
                 && (time() - (int)($c['ts'] ?? 0)) < self::SCAN_TTL
                 && $size - (int)($c['size'] ?? 0) < max(262144, intdiv($bytes, 4))
@@ -673,7 +690,7 @@ class FusionController extends ApiControllerBase
          * in one place and the loop stays a plain fgets stream.
          */
         $consume = function (string $line) use (
-            &$clients, &$domains, &$rcode, &$total, &$noise, &$from, &$to
+            &$clients, &$domains, &$rcode, &$total, &$noise, &$from, &$to, $cidrs
         ) {
             if (strpos($line, 'event="dns_response"') === false) {
                 return;
@@ -687,6 +704,10 @@ class FusionController extends ApiControllerBase
                 return;
             }
             $client = $t['client_ip'] ?? '';
+            // scope: queries from other segments are not this resolver's yardstick
+            if ($cidrs && $client !== '' && !$this->ipInCidrs($client, $cidrs)) {
+                return;
+            }
             $rc = $this->canonicalRcode($t['rcode'] ?? '');
             $total++;
             if ($rc !== '') {
@@ -765,7 +786,8 @@ class FusionController extends ApiControllerBase
             'cached' => false,
         ];
         $cache = [
-            'v' => self::SCAN_SCHEMA, 'file' => $file, 'size' => $size,
+            'v' => self::SCAN_SCHEMA, 'filter' => implode(',', $cidrs),
+            'file' => $file, 'size' => $size,
             'bytes' => $bytes, 'ts' => time(), 'data' => $data,
         ];
         @file_put_contents(self::SCAN_CACHE, json_encode($cache), LOCK_EX);
@@ -816,6 +838,132 @@ class FusionController extends ApiControllerBase
             $out[$key] = $val;
         }
         return $out;
+    }
+
+    /**
+     * Segments this page reports on. Default is the two LAN segments the
+     * resolver serves; /usr/local/etc/kixdns-fusion.json can override it:
+     *   {"cidrs": ["192.168.5.0/24", "192.168.50.0/24"]}
+     */
+    private function filterCidrs(): array
+    {
+        if (is_readable(self::FUSION_CONF)) {
+            $j = json_decode((string)@file_get_contents(self::FUSION_CONF), true);
+            if (is_array($j) && !empty($j['cidrs']) && is_array($j['cidrs'])) {
+                $c = [];
+                foreach ($j['cidrs'] as $x) {
+                    if (is_string($x) && preg_match('#^[0-9a-fA-F:.]+/\d{1,3}$#', trim($x))) {
+                        $c[] = trim($x);
+                    }
+                }
+                if ($c) {
+                    return $c;
+                }
+            }
+        }
+        return self::DEF_CIDRS;
+    }
+
+    /**
+     * CIDR membership for both families. IPv6 link-local addresses never match a
+     * v4 CIDR, which is exactly why they disappear from the device count once a
+     * scope is set.
+     */
+    private function ipInCidrs(string $ip, array $cidrs): bool
+    {
+        $ip = trim($ip);
+        // defensive: an observer event carries ip:port, dns_response does not
+        if (preg_match('/^\d{1,3}(\.\d{1,3}){3}:\d+$/', $ip)) {
+            $ip = preg_replace('/:\d+$/', '', $ip);
+        }
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+        foreach ($cidrs as $cidr) {
+            $parts = explode('/', $cidr);
+            if (count($parts) !== 2) {
+                continue;
+            }
+            list($net, $bits) = [$parts[0], (int)$parts[1]];
+            if (strpos($net, ':') === false) {
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+                    continue;
+                }
+                if ($bits < 0 || $bits > 32) {
+                    continue;
+                }
+                $mask = $bits === 0 ? 0 : (-1 << (32 - $bits));
+                if ((ip2long($ip) & $mask) === (ip2long($net) & $mask)) {
+                    return true;
+                }
+            } else {
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+                    continue;
+                }
+                if ($bits < 0 || $bits > 128) {
+                    continue;
+                }
+                $ib = @inet_pton($ip);
+                $nb = @inet_pton($net);
+                if ($ib === false || $nb === false || strlen($ib) !== 16) {
+                    continue;
+                }
+                $full = intdiv($bits, 8);
+                if ($full > 0 && substr($ib, 0, $full) !== substr($nb, 0, $full)) {
+                    continue;
+                }
+                $rem = $bits % 8;
+                if ($rem === 0) {
+                    return true;
+                }
+                $m = (0xFF << (8 - $rem)) & 0xFF;
+                if ((ord($ib[$full]) & $m) === (ord($nb[$full]) & $m)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Addresses the appliance itself owns. "This box has traffic but never asked
+     * its own resolver" is a tautology, so those IPs are skipped when judging
+     * clients — the gateway still stays in the device table (it is a real client
+     * of the uplink).
+     */
+    private function serverAddrs(): array
+    {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+        $cache = [];
+        if (!empty($_SERVER['SERVER_ADDR'])) {
+            $cache[] = (string)$_SERVER['SERVER_ADDR'];
+        }
+        try {
+            $cfg = \OPNsense\Core\Config::getInstance()->object();
+            foreach (['interfaces', 'virtualip'] as $sect) {
+                if (!isset($cfg->$sect)) {
+                    continue;
+                }
+                foreach ($cfg->$sect->children() as $node) {
+                    foreach (['ipaddr', 'subnet', 'address'] as $field) {
+                        if (empty($node->$field)) {
+                            continue;
+                        }
+                        $v = preg_replace('#/.*$#', '', trim((string)$node->$field));
+                        if ($v !== '' && filter_var($v, FILTER_VALIDATE_IP)) {
+                            $cache[] = $v;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // config unavailable (CLI before bootstrap): SERVER_ADDR is enough
+        }
+        $cache = array_values(array_unique($cache));
+        return $cache;
     }
 
     /**
@@ -896,7 +1044,11 @@ class FusionController extends ApiControllerBase
         //    on another segment (or has its own resolver), while a client that
         //    asked a couple of times and then moved megabytes almost certainly
         //    switched to DoH/hardcoded IPs. Only the second case is an alarm.
+        $self = $this->serverAddrs();
         foreach ($devices as $d) {
+            if (in_array($d['ip'], $self, true)) {
+                continue;   // the appliance talking to itself proves nothing
+            }
             $bytes = (int)$d['in_bytes'] + (int)$d['out_bytes'];
             if ($bytes < 3 * 1024 * 1024) {
                 continue;

@@ -75,6 +75,7 @@
             <input type="checkbox" id="fx-auto" checked> 自动刷新 30s
         </label>
         <span class="fx-chip" id="fx-meta">加载中…</span>
+        <span class="fx-chip" id="fx-scope" title="只统计这些网段的客户端，其余网段与 IPv6 链路本地地址不计">…</span>
         <span style="flex:1"></span>
         <a class="fx-chip" href="/ui/appdpi" title="打开应用识别页"><i class="fa fa-chart-pie"></i> 应用识别</a>
         <a class="fx-chip" href="/ui/kixdns" title="打开 KixDNS 页"><i class="fa fa-database"></i> KixDNS</a>
@@ -403,6 +404,10 @@
         document.getElementById('fx-meta').textContent =
             '窗口 ' + esc(dns.window_to || '-') + ' · 查询 ' + num(dns.queries)
             + ' · 未识别 ' + share + '% · ' + num(d.elapsed_ms) + 'ms';
+        var cidrs = dns.filter_cidrs || [];
+        document.getElementById('fx-scope').textContent = cidrs.length
+            ? '网段 ' + cidrs.join(' · ')
+            : '全部网段';
     }
 
     function postJ(url, data) {

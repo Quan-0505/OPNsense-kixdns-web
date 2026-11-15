@@ -1,5 +1,5 @@
-PLUGIN_NAME=		kixdns-community
-PLUGIN_VERSION=		0.5.4
+﻿PLUGIN_NAME=		kixdns-community
+PLUGIN_VERSION=		0.5.5
 PLUGIN_COMMENT=		KixDNS High Performance DNS Server
 PLUGIN_MAINTAINER=	Quan-0505@users.noreply.github.com
 PLUGIN_WWW=		https://github.com/Quan-0505/opn-kixdns

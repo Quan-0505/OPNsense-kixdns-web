@@ -66,6 +66,47 @@ v0.5.3 修复应用后引擎因端口占用等原因立即退出、界面却报�
 > 真实缓存命中率与端到端延迟；未开启时日志中只有*转发*（回源）响应记录 —— 缓存命中不可见，此时控制台显示这一较窄口径
 > 并在状态条中标注。所有占比列始终以当前口径的总量为分母。
 
+## 🔗 DNS × 应用识别（融合视图）
+
+**Services → KixDNS → DNS x 应用识别**（`/ui/kixdns/fusion`）把本插件与 [panabit-appdpi](https://github.com/SuLingGG/panabit-appdpi)
+两个引擎的数据拼到一屏。两边描述的是同一批流量的两个侧面，缺的正好是对方有的：
+
+| | KixDNS 有 | KixDNS 缺 |
+| --- | --- | --- |
+| 谁在问（client_ip）、问了什么（qname）、解得开没有（rcode / NXDOMAIN）、多快（latency）、命中缓存没有、走的哪个上游 | ✅ | 域名属于哪个**应用**；这批名字后来又产生了多少**流量** |
+
+| | appdpi 有 | appdpi 缺 |
+| --- | --- | --- |
+| 谁在占带宽（devices）、属于哪个应用（apps / dev_apps）、对端在哪（peers）、域名→应用的观察表（domains） | ✅ | 谁**查过**但**没连**（被墙 / 预取 / 被拦截）；缓存命中、延迟、响应码 |
+
+合流只用两个天然主键：**客户端 IP** 和 **域名**。域名→应用优先取 appdpi 自己观察到的 `domains[]`，未命中时回落到
+`/usr/local/share/appdpi/panabit.rulepack` 里的 2597 条 domain 规则（`.xiaohongshu.com` → 小红书 这类后缀表，1622 个应用字典），
+**不需要修改 appdpi 引擎**。规则表在首次请求时解析并缓存到 `/tmp/kixdns_dpi_index.json`，随 rulepack 的 mtime 自动失效。
+
+页面内容：DNS 侧 KPI（查询量 / 唯一域名 / NoError·NXDomain / 未识别占比）、DPI 侧 KPI（在线设备 / 识别应用 / 上下行）、
+**设备画像**（IP · MAC · 双向速率 · 应用 Top · DNS 查询 · 唯一域名 · NXDOMAIN 比例 · 查询 Top）、
+**域名融合排行**（查询数 + 应用 + DPI 命中/字节 + 一致性标记）、**应用融合排行**、以及**未识别域名清单**。
+
+**交叉洞察**才是这页的价值所在 —— 单看任何一边都发现不了：
+
+| 洞察 | 判据 | 意味着什么 |
+| --- | --- | --- |
+| 疑似 DoH / 硬编码 IP | 设备窗口内流量 ≥ 3 MB 但 DNS 查询 ≤ 3 次 | 它绕过了本机解析器（DoH/DoT、写死 IP、或走代理） |
+| NXDOMAIN 风暴 | 单设备 NXDOMAIN 占比 ≥ 30% 且查询 ≥ 30 | 广告 SDK 探测、DGA，或域名已失效 |
+| 单域名高频轮询 | 某域名占该设备查询 ≥ 80% 且总数 ≥ 100 | 设备心跳/连通性探测（TP-Link、小米 IoT 常见），也可能是被劫持在刷同一个域名 |
+| 查询集中在一台 | 单客户端占窗口查询 ≥ 50% | 它是下游转发器，或自身异常 |
+| 只查不连 | 域名查询 ≥ 20 次但 appdpi 零字节 | 被墙 / 解析失败 / 预取 / 走了别的出口 |
+| 连而不查 | appdpi 观察到域名但窗口内无对应查询 | 对方自行 DoH 解析，或 TTL 较长 |
+| 规则库盲区 | 未识别域名查询占比 ≥ 30% | 按清单补规则，覆盖率直接上去 |
+
+接口：`GET /api/kixdns/fusion/overview?bytes=N`（N = 扫描的日志尾部字节数，默认 16 MiB，上限 256 MiB）。
+窗口口径是**日志尾部 N 字节**（16 MiB ≈ 最近 1 小时），不是整天，页面顶部会打印窗口起止时间与扫描耗时。
+appdpi 未安装时页面自动降级为 DNS 单边视图并给出提示；两个引擎任一停摆都不会导致页面报错。
+
+> 数据源：`/var/log/kixdns/kixdns_*.log`（尾部窗口）、`/var/run/appdpi/status.json`（引擎原子替换的快照）、
+> `/usr/local/share/appdpi/panabit.rulepack`（域名规则 + 应用字典）、`/var/run/appdpi/leases.txt`（主机名回落）。
+> 全部只读，不改配置、不重启服务。
+
 ## 🔭 原生可观测性
 
 kixdns ≥ 0.2.0 提供 **Observer API**（`EngineObserver`），当以 `--debug` 启动时会安装其参考实现。本插件在

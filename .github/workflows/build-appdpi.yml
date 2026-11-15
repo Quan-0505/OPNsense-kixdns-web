@@ -24,7 +24,9 @@ on:
         default: "15.1-RELEASE"
 
 env:
-  APPDFI_REPO: https://github.com/SuLingGG/panabit-appdpi
+  # owner/repo, not a URL: the upstream is private, so the source comes through
+  # the tarball API with the APPDFI_TOKEN secret instead of a git clone.
+  APPDFI_REPO: SuLingGG/panabit-appdpi
 
 jobs:
   cross:
@@ -52,14 +54,29 @@ jobs:
           echo "--- libc for the linker ---"
           ls -l /opt/fbsd/lib/libc.so* /opt/fbsd/usr/lib/libc.a 2>/dev/null | head -4
 
-      - name: Clone appdpi at the requested ref
+      - name: Fetch appdpi source at the requested ref
+        env:
+          TOKEN: ${{ secrets.APPDFI_TOKEN }}
+          REF: ${{ inputs.upstream_ref }}
         run: |
           set -eu
-          git clone "$APPDFI_REPO" appdpi-src
-          cd appdpi-src
-          git checkout "${{ inputs.upstream_ref }}"
-          git log --oneline -1
-          git describe --always --dirty
+          # the upstream repo is private: a plain anonymous clone gets
+          # "could not read Username for 'https://github.com'". The tarball API
+          # with a token that has repo read works for any commit, and avoids
+          # putting the token in a remote URL where it would land in the log.
+          mkdir -p appdpi-src
+          URL="https://api.github.com/repos/$APPDFI_REPO/tarball/$REF"
+          if [ -n "${TOKEN:-}" ]; then
+            curl -fsSL -H "Authorization: Bearer $TOKEN" -o /tmp/src.tgz "$URL"
+          else
+            curl -fsSL -o /tmp/src.tgz "$URL"
+          fi
+          tar -xzf /tmp/src.tgz -C appdpi-src --strip-components=1
+          echo "--- source tree ---"
+          ls appdpi-src | head -12
+          echo "--- requested ref ---"
+          echo "$REF"
+          head -3 appdpi-src/CHANGELOG.md 2>/dev/null || true
 
       - name: Cross compile
         run: |
@@ -105,7 +122,6 @@ jobs:
           sha256sum appdpi | tee ../appdpi.sha256
           {
             echo "upstream_ref=${{ inputs.upstream_ref }}"
-            echo "upstream_commit=$(git rev-parse HEAD)"
             echo "freebsd_sysroot=${{ inputs.freebsd_release }}"
             echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "compiler=$(clang --version | head -1)"

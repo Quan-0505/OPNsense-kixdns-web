@@ -239,15 +239,24 @@ class AppsController extends ApiControllerBase
     /* ------------------------------------------------------------------ */
 
     /**
-     * Write the fusion findings into the two file formats appdpi understands:
+     * Render the fusion state back into appdpi's own rule format.
      *
-     *   kixdns-feed.rules       legacy CSV (`rule domain suffix <x> app <id>`)
-     *   panabit+kixdns.rulepack a copy of the shipped rulepack with those same
-     *                           records appended to its [rules] section
+     * Two artifacts, both deliberately zero-risk:
      *
-     * Only *inferred* suffixes are emitted: names the fusion page could not
-     * attribute to any app, whose registrable domain is already known to belong
-     * to one. That is the information appdpi is missing and kixdns has.
+     *   kixdns-feed.rules        exact records for every name appdpi itself
+     *                            attributed (`rule domain exact <name> app <id>`)
+     *   panabit+kixdns.rulepack  the shipped rulepack with those same records
+     *                            appended to [rules]
+     *   kixdns-unmatched.csv     names nobody could attribute, with query counts,
+     *                            for a human to write rules for
+     *
+     * Suffix inference is NOT done on purpose. The obvious heuristic — "this
+     * unknown name shares a registrable domain with an attributed one" — looks
+     * fine until it fires on shared hosting: github.com came back as the proxy
+     * app, hihonorcloud.com as 小红书, because those hosts were reached through a
+     * proxy or a probe. Turning that into a suffix rule would silently move real
+     * traffic into the wrong app, so only appdpi's own attributions are frozen,
+     * and everything else is reported for a human decision.
      */
     public function feedAction()
     {
@@ -275,26 +284,18 @@ class AppsController extends ApiControllerBase
             }
             $orphans[$dom] = $n;
         }
+        arsort($orphans);
 
-        // 2. infer: same registrable domain as a name appdpi attributed
-        $known = [];
+        // 2. exact records: the engine's own verdicts, frozen
+        $exact = [];
         foreach ($dpi['domains'] as $dom => $rec) {
-            if ((int)$rec['app_id'] > 0) {
-                $et = $this->registrable((string)$dom);
-                if ($et !== '' && !isset($known[$et])) {
-                    $known[$et] = (int)$rec['app_id'];
-                }
-            }
-        }
-        $inferred = [];
-        foreach ($orphans as $dom => $n) {
-            $et = $this->registrable((string)$dom);
-            if ($et !== '' && isset($known[$et]) && !isset($inferred[$et])) {
-                $inferred[$et] = ['app_id' => $known[$et], 'seen' => $n];
+            $id = (int)$rec['app_id'];
+            if ($id > 0 && strpos((string)$dom, '.') !== false) {
+                $exact[(string)$dom] = $id;
             }
         }
 
-        // 3. render both formats
+        // 3. render
         if (!is_dir(self::FEED_DIR)) {
             @mkdir(self::FEED_DIR, 0750, true);
         }
@@ -302,8 +303,7 @@ class AppsController extends ApiControllerBase
         $csv .= "# appdpi refuses to load --rules together with --rulepack, so use\n";
         $csv .= "# panabit+kixdns.rulepack (see below) or merge this file by hand.\n";
         $seenApp = [];
-        foreach ($inferred as $suf => $rec) {
-            $id = $rec['app_id'];
+        foreach ($exact as $dom => $id) {
             if (!isset($seenApp[$id])) {
                 $seenApp[$id] = true;
                 $csv .= sprintf(
@@ -313,15 +313,27 @@ class AppsController extends ApiControllerBase
                 );
             }
             $csv .= sprintf(
-                "rule domain suffix %s app %d prio 900 note kixdns-feed\n",
-                $suf,
+                "rule domain exact %s app %d prio 800 note kixdns-feed\n",
+                $dom,
                 $id
             );
         }
         $csvPath = self::FEED_DIR . '/kixdns-feed.rules';
         @file_put_contents($csvPath, $csv);
 
-        // merged rulepack: append the inferred records to the [rules] section
+        // unmatched list for a human
+        $umPath = self::FEED_DIR . '/kixdns-unmatched.csv';
+        $um = "# qname,queries — DNS 侧观察到、两个引擎都无法归属的域名\n";
+        $umShown = 0;
+        foreach ($orphans as $dom => $n) {
+            $um .= $dom . ',' . $n . "\n";
+            if (++$umShown >= 2000) {
+                break;
+            }
+        }
+        @file_put_contents($umPath, $um);
+
+        // merged rulepack: append the exact records to the [rules] section
         $mergedPath = self::FEED_DIR . '/panabit+kixdns.rulepack';
         $mergedLines = 0;
         $src = @fopen(self::RULEPACK, 'r');
@@ -329,13 +341,13 @@ class AppsController extends ApiControllerBase
         if ($src !== false && $dst !== false) {
             $inRules = false;
             $pending = [];
-            foreach ($inferred as $suf => $rec) {
+            foreach ($exact as $dom => $id) {
                 $pending[] = sprintf(
-                    "R9%05d\tdomain\tsuffix\t%s\t%d\tkixdns-feed\thostkey_data\t0\t40\t0x0\tactive\tinferred by fusion\t\t%s\n",
+                    "R9%05d\tdomain\texact\t%s\t%d\tkixdns-feed\thostkey_data\t0\t40\t0x0\tactive\tfrozen from appdpi observation\t\t%s\n",
                     count($pending),
-                    $suf,
-                    $rec['app_id'],
-                    preg_replace('/[\t\r\n]/', ' ', $this->appNameFromIndex($rec['app_id'], $idx))
+                    $dom,
+                    $id,
+                    preg_replace('/[\t\r\n]/', ' ', $this->appNameFromIndex($id, $idx))
                 );
             }
             $flushed = false;
@@ -371,16 +383,18 @@ class AppsController extends ApiControllerBase
 
         return [
             'result' => 'ok',
-            'orphan_domains' => count($orphans),
-            'inferred_suffixes' => count($inferred),
+            'exact_rules' => count($exact),
+            'unmatched_domains' => count($orphans),
             'rule_lines' => $mergedLines,
             'csv' => $csvPath,
             'csv_bytes' => @filesize($csvPath),
+            'unmatched_csv' => $umPath,
+            'unmatched_bytes' => @filesize($umPath),
             'rulepack' => $mergedPath,
             'rulepack_bytes' => @filesize($mergedPath),
-            'sample' => array_slice(array_keys($inferred), 0, 12),
-            'note' => 'appdpi 不支持同时加载 --rules 与 --rulepack：改用合并后的 rulepack，'
-                . '并在重启 appdpi 后生效（不会影响转发，block-mode 仍为 none）',
+            'sample' => array_slice(array_keys($exact), 0, 12),
+            'note' => '只固化 appdpi 自己的归属结论（exact 精确域名，不扩散）；'
+                . 'appdpi 不支持同时加载 --rules 与 --rulepack，要用合并版 rulepack 并重启 appdpi 才生效',
         ];
     }
 

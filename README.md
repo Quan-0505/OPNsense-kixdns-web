@@ -145,11 +145,17 @@ kixdns 在 DNS 层，拿到"域名 → 应用"之后就能按应用封，比在�
 
 **2. 回灌 appdpi**（`POST /api/kixdns/apps/feed`）
 
-`--top` 截断了 appdpi 的域名表，而 DNS 侧看得见全量。这个动作把 **DNS 侧发现、引擎没列出、但注册域已归属某应用**
-的名字推断出来，写成 appdpi 认的两种格式：
+三个产物，全部零扩散风险：
 
-- `/var/run/appdpi/kixdns-feed.rules` — 旧 CSV：`app <id> <name>` + `rule domain suffix <x> app <id> prio 900`
-- `/var/run/appdpi/panabit+kixdns.rulepack` — 原 rulepack 抄本，把上述记录追加进 `[rules]` 段
+- `/var/run/appdpi/kixdns-feed.rules` — 把 **appdpi 自己给出归属的每个域名**冻结成 `rule domain exact …`
+  （精确匹配，一条只影响一个名字），离线、换引擎、或规则库回退时仍能识别。
+- `/var/run/appdpi/panabit+kixdns.rulepack` — 原 rulepack 抄本，上述记录追加进 `[rules]` 段。
+- `/var/run/appdpi/kixdns-unmatched.csv` — 两个引擎都归不了的域名 + 查询次数（实测 587 条，Top 是
+  `example.com 761`、`gateway.fe.apple-dns.cn`、`i1.hdslb.com`），供人工补规则。
+
+**为什么不做"同注册域推断成后缀规则"**：实测会误伤。`hihonorcloud.com` 因为一台荣耀设备的连通性探测被判成
+小红书、`github.com` 因为走代理被判成"Aladdin云"——把这种结论写成 suffix 规则会**静默**把整片真实流量移进错误
+的应用。所以只固化引擎自己的判断，模糊地带交给人。
 
 ⚠ appdpi **不支持同时加载** `--rules` 与 `--rulepack`（`main.c:3358` 二选一），所以要用合并版 rulepack 并在重启
 appdpi 后生效；不动转发，`block-mode` 仍是 `none`。

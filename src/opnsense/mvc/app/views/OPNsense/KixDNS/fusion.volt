@@ -186,9 +186,11 @@
                 <button id="fx-feed-run" class="btn btn-primary btn-sm"><i class="fa fa-flask"></i> 生成注入文件</button>
                 <span class="fx-chip" id="fx-feed-state">未生成</span>
             </div>
-            <div id="fx-feed-out" class="fx-muted">生成 <code>/var/run/appdpi/kixdns-feed.rules</code>（旧 CSV 格式）
-                与 <code>/var/run/appdpi/panabit+kixdns.rulepack</code>（合并版 rulepack）。appdpi 不支持同时加载
-                <code>--rules</code> 与 <code>--rulepack</code>，所以要用合并版并重启 appdpi 才生效。</div>
+            <div id="fx-feed-out" class="fx-muted">生成 <code>/var/run/appdpi/kixdns-feed.rules</code>
+                （只固化 appdpi 自己的归属结论，<b>精确域名 exact</b>，不做后缀扩散）、
+                <code>/var/run/appdpi/panabit+kixdns.rulepack</code>（合并版）以及
+                <code>/var/run/appdpi/kixdns-unmatched.csv</code>（两引擎都归不了的域名清单，供人工补规则）。
+                appdpi 不支持同时加载 <code>--rules</code> 与 <code>--rulepack</code>，要用合并版并重启 appdpi 才生效。</div>
         </div>
     </div>
 
@@ -465,11 +467,12 @@
         st.textContent = '生成中…';
         postJ('/api/kixdns/apps/feed', {}).done(function (d) {
             if (d.result === 'failed') { st.textContent = '失败：' + d.message; return; }
-            st.textContent = '已生成 ' + d.rule_lines + ' 条规则';
-            out.innerHTML = '未归属域名 <b>' + d.orphan_domains + '</b> 个，能推断出 <b>'
-                + d.inferred_suffixes + '</b> 个后缀<br>'
+            st.textContent = '已固化 ' + d.exact_rules + ' 条精确规则';
+            out.innerHTML = 'appdpi 自己的归属结论 <b>' + d.exact_rules + '</b> 条 → 冻结为精确域名规则<br>'
+                + '两引擎都归不了的域名 <b>' + d.unmatched_domains + '</b> 个 → 人工补规则清单<br>'
                 + '<code>' + esc(d.csv) + '</code>（' + hbytes(d.csv_bytes) + '）<br>'
                 + '<code>' + esc(d.rulepack) + '</code>（' + hbytes(d.rulepack_bytes) + '，含原库全部规则）<br>'
+                + '<code>' + esc(d.unmatched_csv) + '</code>（' + hbytes(d.unmatched_bytes) + '）<br>'
                 + '样例：' + (d.sample || []).map(function (s) {
                     return '<span class="fx-tag rule">' + esc(s) + '</span>';
                 }).join(' ') + '<br><span class="fx-muted">' + esc(d.note) + '</span>';

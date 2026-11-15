@@ -22,6 +22,13 @@ on:
         description: "FreeBSD base.txz release used as sysroot"
         required: false
         default: "15.1-RELEASE"
+      appdpi_version:
+        description: "package version for the .pkg and the release tag"
+        required: false
+        default: "1.0.1"
+
+permissions:
+  contents: write
 
 env:
   # owner/repo, not a URL: the upstream is private, so the source comes through
@@ -172,3 +179,134 @@ jobs:
             appdpi.sha256
             appdpi.build.txt
           if-no-files-found: error
+
+  package:
+    name: Package appdpi-${{ inputs.appdpi_version }} (FreeBSD:15:amd64)
+    needs: cross
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: appdpi-freebsd-amd64
+          path: dist
+
+      - name: Stage package root
+        run: |
+          set -eu
+          # The installed appdpi-1.0.0 package owns exactly one path, so the
+          # replacement has to own exactly the same one -- anything more would
+          # make "pkg add -f" delete files that belong to os-appdpi-devel
+          # (the rulepack, the rc script, the UI).
+          rm -rf stage
+          mkdir -p stage/usr/local/bin
+          install -m 0755 dist/appdpi-src/appdpi stage/usr/local/bin/appdpi
+          file stage/usr/local/bin/appdpi
+          sha256sum stage/usr/local/bin/appdpi
+
+      - name: Build +MANIFEST and .pkg
+        env:
+          VERSION: ${{ inputs.appdpi_version }}
+          UPSTREAM_REF: ${{ inputs.upstream_ref }}
+          SYSROOT_REL: ${{ inputs.freebsd_release }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import hashlib, json, os
+
+          root = "stage"
+          files, flatsize = {}, 0
+          for base, _dirs, names in os.walk(root):
+              for name in names:
+                  path = os.path.join(base, name)
+                  rel = "/" + os.path.relpath(path, root).replace(os.sep, "/")
+                  data = open(path, "rb").read()
+                  flatsize += len(data)
+                  files[rel] = "1$" + hashlib.sha256(data).hexdigest()
+
+          version = os.environ["VERSION"]
+          manifest = {
+              "name": "appdpi",
+              "version": version,
+              "origin": "net/appdpi",
+              "comment": "设备级应用识别引擎（appdpi capture）",
+              "maintainer": "Quan-0505@users.noreply.github.com",
+              "www": "https://github.com/SuLingGG/panabit-appdpi",
+              "abi": "FreeBSD:15:amd64",
+              "arch": "freebsd:15:x86:64",
+              "prefix": "/usr/local",
+              "flatsize": flatsize,
+              "licenselogic": "single",
+              "licenses": ["MIT"],
+              "desc": (
+                  "Device-level application identification engine (appdpi capture).\n"
+                  "Built from SuLingGG/panabit-appdpi at " + os.environ["UPSTREAM_REF"] + ",\n"
+                  "cross-compiled against the FreeBSD " + os.environ["SYSROOT_REL"] + " base sysroot.\n\n"
+                  "WWW: https://github.com/SuLingGG/panabit-appdpi"
+              ),
+              "categories": ["net"],
+              "annotations": {
+                  "upstream_ref": os.environ["UPSTREAM_REF"],
+                  "freebsd_sysroot": os.environ["SYSROOT_REL"],
+                  "built_by": "Quan-0505/OPNsense-kixdns-web build-appdpi.yml",
+              },
+          }
+          compact = dict(manifest)
+          manifest["files"] = files
+          with open("+COMPACT_MANIFEST", "w") as fh:
+              json.dump(compact, fh, separators=(",", ":"))
+          with open("+MANIFEST", "w") as fh:
+              json.dump(manifest, fh, separators=(",", ":"))
+          print("files:", list(files), "flatsize:", flatsize)
+          PY
+
+          OUT="appdpi-${VERSION}-FreeBSD_15_amd64.pkg"
+          ( echo "+COMPACT_MANIFEST"
+            echo "+MANIFEST"
+            cd stage && find . -type f | sed 's|^\./|stage/|' | sort ) > filelist.txt
+          tar --owner=0 --group=0 --numeric-owner \
+              --transform='s|^stage/|/|' \
+              -Jcf "${OUT}" -T filelist.txt
+          ls -lh "${OUT}"
+          echo "--- archive head ---"
+          tar -tf "${OUT}" | head -n 5
+          sha256sum "${OUT}" | tee "${OUT}.sha256"
+          echo "PKG_FILE=${OUT}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_FILE }}
+          path: |
+            ${{ env.PKG_FILE }}
+            ${{ env.PKG_FILE }}.sha256
+
+      # pkg add https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/appdpi-<v>/<file>.pkg
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: appdpi-${{ inputs.appdpi_version }}
+          target_commitish: main
+          name: appdpi ${{ inputs.appdpi_version }} (FreeBSD 15.1 amd64)
+          body: |
+            Device-level app identification engine for OPNsense 26.7, cross-built
+            from `SuLingGG/panabit-appdpi` @ `${{ inputs.upstream_ref }}`.
+
+            Contains only `/usr/local/bin/appdpi` — it replaces the binary from
+            `appdpi-1.0.0` and leaves `os-appdpi-devel` (rulepack, rc script, UI)
+            untouched.
+
+            **What this build fixes:** server-side TLS fingerprints (JA3S) no longer
+            decide an application on their own. Before this, every site behind the
+            same nginx TLS stack was attributed to the proxy app whose fingerprint
+            matched (observed here: `github.com` → Aladdin云, plus a 赔钱机场/VPN
+            cluster that should not exist on a home LAN).
+
+            Install / upgrade:
+            ```sh
+            pkg add -f https://github.com/Quan-0505/OPNsense-kixdns-web/releases/download/appdpi-${{ inputs.appdpi_version }}/appdpi-${{ inputs.appdpi_version }}-FreeBSD_15_amd64.pkg
+            /usr/local/etc/rc.d/appdpi restart
+            ```
+          files: |
+            ${{ env.PKG_FILE }}
+            ${{ env.PKG_FILE }}.sha256
+          fail_on_unmatched_files: true
+

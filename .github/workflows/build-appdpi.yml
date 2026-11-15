@@ -96,17 +96,26 @@ jobs:
           TARGET=x86_64-unknown-freebsd15
           cd appdpi-src
 
-          # the base ships libpcap for tcpdump; link the static archive when
-          # present, otherwise the shared object by exact name (no .so symlink)
-          PCAP=$(ls "$SYSROOT"/usr/lib/libpcap.a "$SYSROOT"/lib/libpcap.a 2>/dev/null | head -1 || true)
-          if [ -z "$PCAP" ]; then
-            PCAP=$(ls "$SYSROOT"/usr/lib/libpcap.so.8 "$SYSROOT"/lib/libpcap.so.8 2>/dev/null | head -1 || true)
+          # The base ships libpcap twice: the shared object tcpdump itself links,
+          # and a static archive. The archive pulls in RDMA capture support and
+          # therefore needs libibverbs/libirdma symbols at link time; the shared
+          # object defers that to runtime and matches what the OS does. Prefer
+          # the .so, keep the archive as a fallback with the extra libs.
+          PCAP=""
+          EXTRA=""
+          PCAP_SO=$(ls "$SYSROOT"/usr/lib/libpcap.so.8 "$SYSROOT"/lib/libpcap.so.8 2>/dev/null | head -1 || true)
+          if [ -n "$PCAP_SO" ]; then
+            PCAP="$PCAP_SO"
+            echo "linking dynamically against: $PCAP"
+          else
+            PCAP=$(ls "$SYSROOT"/usr/lib/libpcap.a "$SYSROOT"/lib/libpcap.a 2>/dev/null | head -1 || true)
+            EXTRA="-libverbs -lirdma"
+            echo "linking statically against: $PCAP (extra: $EXTRA)"
           fi
           if [ -z "$PCAP" ]; then
             echo "no libpcap in the base sysroot" >&2
             exit 1
           fi
-          echo "linking against: $PCAP"
 
           mkdir -p ../obj
           for f in src/*.c; do
@@ -130,7 +139,7 @@ jobs:
           done
 
           clang --target=$TARGET --sysroot=$SYSROOT -fuse-ld=lld \
-            -o appdpi ../obj/*.o "$PCAP"
+            -o appdpi ../obj/*.o "$PCAP" $EXTRA
 
           echo "--- artifact sanity ---"
           file appdpi

@@ -130,6 +130,10 @@ jobs:
             # Makefile lists SRCS explicitly for the same reason
             case "$(basename "$f")" in
               bench_main.c) echo "  skip $(basename "$f")"; continue ;;
+              # bpf_load.c is the eBPF classifier loader: <linux/bpf.h>,
+              # syscall(__NR_bpf), sys/statfs.h. FreeBSD has no eBPF classifier
+              # to load, so it cannot compile here; a stub satisfies exec.c.
+              bpf_load.c) echo "  skip $(basename "$f") (linux-only eBPF)"; continue ;;
             esac
             echo "  cc $(basename "$f")"
             # Ten of the 26 sources use AF_INET / struct in6_addr / struct
@@ -145,6 +149,16 @@ jobs:
               -c "$f" -o "../obj/$(basename "$f" .c).o"
           done
 
+          # FreeBSD stub for the Linux-only eBPF loader
+          cat > bpf_load_stub.c <<'STUB'
+          #include <stddef.h>
+          #include "bpf_load.h"
+          int bpf_load(const char *obj, char *err, size_t cap)
+          { (void)obj; (void)err; (void)cap; return -1; }
+          int bpf_load_if_needed(const char *obj, char *err, size_t cap)
+          { (void)obj; (void)err; (void)cap; return -1; }
+          STUB
+          clang --target=$TARGET --sysroot=$SYSROOT -I../src -c bpf_load_stub.c -o ../obj/zz_bpf_stub.o
           clang --target=$TARGET --sysroot=$SYSROOT -fuse-ld=lld \
             -o appdpi ../obj/*.o "$PCAP" $EXTRA
 

@@ -7,6 +7,15 @@
             <pattern>api/kixdns/*</pattern>
         </patterns>
     </page-services-kixdns>
+    <page-services-kixdns-block>
+        <name>Services: KixDNS: 应用封堵</name>
+        <description>Allow writing DNS-layer app block rules</description>
+        <patterns>
+            <pattern>ui/kixdns/block</pattern>
+            <pattern>api/kixdns/apps/block</pattern>
+            <pattern>api/kixdns/apps/unblock</pattern>
+        </patterns>
+    </page-services-kixdns-block>
     <page-services-kixdns-log>
         <name>Services: KixDNS: Log File</name>
         <description>Allow access to the KixDNS log file</description>

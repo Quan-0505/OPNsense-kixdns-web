@@ -1,4 +1,4 @@
-name: Build OPNsense Plugin
+﻿name: Build OPNsense Plugin
 
 on:
   push:

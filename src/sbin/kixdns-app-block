@@ -1,0 +1,278 @@
+#!/usr/local/bin/php -q
+<?php
+
+/*
+ * kixdns-app-block — act on what appdpi identified, at the pf layer.
+ *
+ * The engine's own --block-mode nft needs nftables, which FreeBSD does not have,
+ * and its policy decision runs on the *first packet* of a flow, where app_id is
+ * still 0 — so an "--app 878" rule can never fire (verified: 0 elements pushed,
+ * empty block log, while the same flow was identified as Bilibili). Panabit does
+ * it the other way round: identify first, then apply the policy.
+ *
+ * This script is that other way round, without touching the engine:
+ *
+ *   1. read /var/run/appdpi/status.json (peer table, already identified)
+ *   2. collect peers whose app_id is in the configured block list
+ *   3. add them to a pf table, which a pf rule drops
+ *
+ * Because the engine only knows a peer after the first connection, blocking is
+ * one connection late by nature: the first request of a new CDN IP gets through,
+ * everything after it is dropped. That is the same trade-off Panabit's own
+ * policy routing makes.
+ *
+ *   kixdns-app-block --dry-run     print what would be blocked, change nothing
+ *   kixdns-app-block               sync the pf table (needs the table to exist)
+ *
+ * Config: /usr/local/etc/kixdns-app-block.json
+ *   {
+ *     "enabled": false,          // fail safe: nothing happens until enabled
+ *     "apps": [878],             // app ids to block (878 = Bilibili)
+ *     "table": "appdpi_block4",  // pf table name, shared with the pf rule
+ *     "max_ips": 400             // guard: never fill the table past this
+ *   }
+ */
+
+$GLOBALS['CONF'] = '/usr/local/etc/kixdns-app-block.json';
+$GLOBALS['STATE'] = '/var/db/kixdns-app-block.state.json';
+$GLOBALS['LOG'] = '/var/log/kixdns-app-block.log';
+$GLOBALS['STATUS'] = '/var/run/appdpi/status.json';
+
+$dry = in_array('--dry-run', $argv, true);
+$verbose = $dry || in_array('--verbose', $argv, true);
+
+$conf = [
+    'enabled' => false,
+    'apps' => [],
+    'table' => 'appdpi_block4',
+        'max_ips' => 400,
+];
+if (is_readable($GLOBALS['CONF'])) {
+    $raw = json_decode((string)@file_get_contents($GLOBALS['CONF']), true);
+    if (is_array($raw)) {
+        $conf = array_merge($conf, $raw);
+    }
+}
+$apps = [];
+foreach ((array)$conf['apps'] as $a) {
+    if (is_numeric($a) && (int)$a > 0) {
+        $apps[] = (int)$a;
+    }
+}
+
+if (!$dry && (empty($conf['enabled']) || !$apps)) {
+    if ($verbose) {
+        fwrite(STDOUT, "disabled (enabled=false or empty apps) — nothing to do\n");
+    }
+    exit(0);
+}
+
+function say(string $s): void
+{
+    if ($GLOBALS['verbose']) {
+        fwrite(STDOUT, $s . "\n");
+    }
+}
+
+/**
+ * Never block the LAN itself. The engine can attribute a flow to the app we are
+ * blocking while its peer is an internal address (a request served by the
+ * firewall, a local DNS forwarder, the gateway itself). Putting that address in
+ * the table takes the whole LAN down — observed: 192.168.5.1 in the table, every
+ * packet to the gateway dropped, "internet is gone" within a minute.
+ */
+function isPrivateIp(string $ip): bool
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return true;
+    }
+    $long = ip2long($ip);
+    foreach ([['192.168.0.0', 16], ['10.0.0.0', 8], ['172.16.0.0', 12],
+              ['127.0.0.0', 8], ['169.254.0.0', 16], ['0.0.0.0', 8]] as $c) {
+        $mask = $c[1] === 0 ? 0 : (-1 << (32 - $c[1]));
+        if (($long & $mask) === (ip2long($c[0]) & $mask)) {
+            return true;
+        }
+    }
+    return false;
+}
+// ---------------------------------------------------------------------------
+// 1. who is talking to the apps we care about
+// ---------------------------------------------------------------------------
+if (!is_readable($GLOBALS['STATUS'])) {
+    fwrite(STDERR, "no appdpi snapshot at {$GLOBALS['STATUS']}\n");
+    exit(1);
+}
+$j = json_decode((string)@file_get_contents($GLOBALS['STATUS']), true);
+if (!is_array($j)) {
+    fwrite(STDERR, "appdpi snapshot unreadable\n");
+    exit(1);
+}
+
+$peerHit = [];       // ip => ['app' => id, 'flows' => n, 'bytes' => n]
+foreach (($j['peers'] ?? []) as $p) {
+    $app = (int)($p['app_id'] ?? 0);
+    if (!in_array($app, $apps, true)) {
+        continue;
+    }
+    $ip = (string)($p['peer'] ?? '');
+    if ($ip === '' || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        continue;   // pf table here is v4 only; v6 would need its own table
+    }
+    if (isPrivateIp($ip)) {
+        continue;   // never blackhole the LAN (gateway, local forwarders, ...)
+    }
+    $bytes = (int)($p['in_bytes'] ?? 0) + (int)($p['out_bytes'] ?? 0);
+    if (!isset($peerHit[$ip])) {
+        $peerHit[$ip] = ['app' => $app, 'flows' => 0, 'bytes' => 0];
+    }
+    $peerHit[$ip]['flows'] += (int)($p['flows'] ?? 0);
+    $peerHit[$ip]['bytes'] += $bytes;
+}
+// flow table is a second source: short connections may not have reached peers[]
+foreach (($j['flows'] ?? []) as $f) {
+    $app = (int)($f['app_id'] ?? 0);
+    if (!in_array($app, $apps, true)) {
+        continue;
+    }
+    $ip = (string)($f['peer'] ?? '');
+    if ($ip === '' || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        continue;
+    }
+    if (isPrivateIp($ip)) {
+        continue;   // same guard on the flow table
+    }
+    if (!isset($peerHit[$ip])) {
+        $peerHit[$ip] = ['app' => $app, 'flows' => 0, 'bytes' => 0];
+    }
+    $peerHit[$ip]['flows']++;
+    $peerHit[$ip]['bytes'] += (int)($f['bytes'] ?? 0);
+}
+
+uksort($peerHit, function ($a, $b) use ($peerHit) {
+    return $peerHit[$b]['bytes'] <=> $peerHit[$a]['bytes'];
+});
+// Remember peers for a while instead of mirroring "whatever is active now":
+// the engine drops a peer as soon as the flow ages out, and a table that empties
+// the moment the app goes idle gives the next launch a free connection (which is
+// exactly how a blocked app keeps working). Each IP is kept for keep_s seconds
+// after it was last seen.
+$keep_s = max(60, (int)($conf['keep_s'] ?? 300));
+$state = is_readable($GLOBALS['STATE'])
+    ? (array)(json_decode((string)@file_get_contents($GLOBALS['STATE']), true)['ips'] ?? [])
+    : [];
+$now = time();
+foreach ($peerHit as $ip => $rec) {
+    $state[$ip] = $now;
+}
+foreach ($state as $ip => $ts) {
+    if (($now - (int)$ts) > $keep_s || isPrivateIp((string)$ip)) {
+        unset($state[$ip]);
+    }
+}
+$want = array_slice(array_keys($state), 0, max(1, (int)$conf['max_ips']));
+
+// ---------------------------------------------------------------------------
+// 2. what is in the table right now
+// ---------------------------------------------------------------------------
+$have = [];
+$out = @shell_exec('/sbin/pfctl -q -t ' . escapeshellarg((string)$conf['table']) . ' -T show 2>/dev/null');
+foreach (preg_split('/\s+/', trim((string)$out)) as $ip) {
+    if ($ip !== '') {
+        $have[$ip] = 1;
+    }
+}
+
+$add = array_values(array_diff($want, array_keys($have)));
+$del = array_values(array_diff(array_keys($have), $want));
+
+say(sprintf(
+    'apps=%s table=%s  identified peers=%d  in table=%d  +%d -%d',
+    implode(',', $apps),
+    $conf['table'],
+    count($peerHit),
+    count($have),
+    count($add),
+    count($del)
+));
+foreach ($want as $ip) {
+    say(sprintf('  block %-15s app %-5d flows %-4d %s', $ip, $peerHit[$ip]['app'], $peerHit[$ip]['flows'], $peerHit[$ip]['bytes'] > 0 ? round($peerHit[$ip]['bytes'] / 1024) . ' KB' : ''));
+}
+
+if ($dry) {
+    say('(dry run: nothing written)');
+    exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// 3. sync the pf table
+// ---------------------------------------------------------------------------
+$table = (string)$conf['table'];
+
+// OPNsense keeps the alias table in the main ruleset, so plain pfctl -t name.
+// A 'filter reload' rebuilds every alias empty — that is why this runs from cron.
+// The 'already defined in anchor' warning pfctl prints is harmless: OPNsense
+// declares aliases in an anchor too, and the rule resolves to the main table.
+
+if (!preg_match('/^[A-Za-z0-9_]+$/', $table)) {
+    fwrite(STDERR, "bad table name\n");
+    exit(1);
+}
+$rc = 0;
+if ($add) {
+    $cmd = '/sbin/pfctl -q -t ' . $table . ' -T add ' . implode(' ', array_map('escapeshellarg', $add));
+    exec($cmd . ' 2>&1', $o1, $rc1);
+    if ($rc1 !== 0) {
+        fwrite(STDERR, "pfctl add failed ($rc1): " . implode(' ', $o1) . "\n");
+        $rc = 1;
+    }
+}
+if ($del) {
+    $cmd = '/sbin/pfctl -q -t ' . $table . ' -T delete ' . implode(' ', array_map('escapeshellarg', $del));
+    exec($cmd . ' 2>&1', $o2, $rc2);
+    if ($rc2 !== 0) {
+        fwrite(STDERR, "pfctl delete failed ($rc2): " . implode(' ', $o2) . "\n");
+        $rc = 1;
+    }
+}
+
+// A block rule only affects new connections: pf keeps the state of anything
+// already established, so an app with an open session would keep working after
+// its peer lands in the table (observed: table had 5 Bilibili peers, the app
+// still played). Kill the states for every IP we just started blocking.
+if ($add) {
+    $kills = [];
+    foreach ($add as $ip) {
+        $kills[] = '-k ' . escapeshellarg($ip);
+    }
+    if ($kills) {
+        exec('/sbin/pfctl -q ' . implode(' ', $kills) . ' 2>&1', $o3, $rc3);
+        say('killed states for ' . count($kills) . ' peer(s)');
+        if ($rc3 !== 0) {
+            fwrite(STDERR, "pfctl -k failed ($rc3): " . implode(' ', $o3) . "\n");
+        }
+    }
+}
+
+if ($add || $del) {
+    @file_put_contents(
+        $GLOBALS['LOG'],
+        sprintf(
+            "%s +%d -%d apps=%s\n",
+            date('Y-m-d H:i:s'),
+            count($add),
+            count($del),
+            implode(',', $apps)
+        ),
+        FILE_APPEND
+    );
+}
+@file_put_contents($GLOBALS['STATE'], json_encode([
+    'ts' => time(),
+    'apps' => $apps,
+    'table' => $table,
+    'ips' => $state,
+    'blocked' => array_values($want),
+], JSON_UNESCAPED_SLASHES), LOCK_EX);
+
+exit($rc);

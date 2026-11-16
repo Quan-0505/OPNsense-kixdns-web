@@ -1,0 +1,218 @@
+#!/usr/local/bin/php -q
+<?php
+
+/*
+ * kixdns-fusion-alert — turn the DNS x DPI fusion insights into notifications.
+ *
+ * Run from cron (installed by +POST_INSTALL, every 10 minutes) or by hand:
+ *
+ *   /usr/local/sbin/kixdns-fusion-alert            # notify on new findings
+ *   /usr/local/sbin/kixdns-fusion-alert --dry-run  # print, change nothing
+ *   /usr/local/sbin/kixdns-fusion-alert --window 67108864
+ *
+ * What gets notified is decided by the fusion engine itself (the same insights
+ * the page shows), so there is exactly one implementation of the rules:
+ *
+ *   doh        heavy traffic, almost no DNS        (bypasses the resolver)
+ *   nxdomain   >= 30% NXDOMAIN on a busy client    (DGA / dead ads / bad SD-WAN)
+ *   dns-only   queried >= 20x, zero bytes seen     (blocked upstream / pre-fetch)
+ *   bypass     bytes seen, no query logged         (DoH, or long TTL)
+ *   poll       one name dominates a client         (heartbeat or hijack)
+ *   concentration one client dominating the window
+ *   coverage   rulepack blind spot                 (informational)
+ *
+ * Delivery: a log file, syslog (shows up in the OPNsense log viewer) and an
+ * optional webhook. Only kinds used for alerting are configurable; per-finding
+ * cooldown keeps cron from repeating itself.
+ */
+
+$opts = getopt('', ['dry-run', 'window::', 'verbose', 'reset']);
+$dry = isset($opts['dry-run']);
+$verbose = isset($opts['verbose']) || $dry;
+$bytes = isset($opts['window']) ? max(524288, (int)$opts['window']) : 16777216;
+
+$CONF = '/usr/local/etc/kixdns-fusion-alert.json';
+$STATE = '/var/db/kixdns-fusion-alert.state.json';
+$LOG = '/var/log/kixdns-fusion-alert.log';
+$COOLDOWN = 21600;   // 6h per identical finding
+
+$conf = [
+    'enabled' => true,
+    'kinds' => ['doh', 'nxdomain', 'dns-only', 'bypass', 'poll', 'concentration'],
+    'min_queries' => 200,        // ignore windows that are too quiet to judge
+    'webhook_url' => '',
+    'webhook_format' => 'json',  // json | text
+    'cooldown_s' => $COOLDOWN,
+];
+if (is_readable($CONF)) {
+    $raw = json_decode((string)@file_get_contents($CONF), true);
+    if (is_array($raw)) {
+        $conf = array_merge($conf, $raw);
+    }
+}
+if (empty($conf['enabled'])) {
+    if ($verbose) {
+        fwrite(STDOUT, "disabled by $CONF\n");
+    }
+    exit(0);
+}
+
+if (isset($opts['reset'])) {
+    @unlink($STATE);
+}
+
+// ---------------------------------------------------------------------------
+// one implementation of the rules: call the controller the page calls
+// ---------------------------------------------------------------------------
+chdir('/usr/local/opnsense/mvc');
+require_once('/usr/local/opnsense/mvc/script/load_phalcon.php');
+$di = new \Phalcon\DI\FactoryDefault();
+\Phalcon\DI\Di::setDefault($di);
+$_GET = ['bytes' => (string)$bytes];
+
+try {
+    $ctl = new \OPNsense\KixDNS\Api\FusionController();
+    $ctl->request = new \OPNsense\Mvc\Request();
+    $data = $ctl->overviewAction();
+} catch (\Throwable $e) {
+    fwrite(STDERR, 'fusion engine failed: ' . $e->getMessage() . "\n");
+    exit(1);
+}
+if (!is_array($data) || empty($data['dns']['queries'])) {
+    if ($verbose) {
+        fwrite(STDOUT, "no DNS data in window — nothing to judge\n");
+    }
+    exit(0);
+}
+foreach (($data['warnings'] ?? []) as $w) {
+    fwrite(STDERR, "warning: $w\n");
+}
+
+// ---------------------------------------------------------------------------
+// cooldown bookkeeping
+// ---------------------------------------------------------------------------
+$state = [];
+if (is_readable($STATE)) {
+    $s = json_decode((string)@file_get_contents($STATE), true);
+    if (is_array($s)) {
+        $state = $s;
+    }
+}
+$now = time();
+$cooldown = max(60, (int)$conf['cooldown_s']);
+
+$emit = [];
+$skipped = 0;
+foreach (($data['insights'] ?? []) as $ins) {
+    $kind = (string)($ins['kind'] ?? '');
+    if (!in_array($kind, $conf['kinds'], true)) {
+        continue;
+    }
+    // The cooldown key must stay ASCII: cutting a Chinese sentence at a fixed
+    // byte offset can split a UTF-8 sequence, and json_encode() then fails
+    // silently, leaving an empty state file (so every cron run re-alerts).
+    $text = (string)($ins['text'] ?? '');
+    $key = $kind . '|' . md5(preg_replace('/\s+/', ' ', $text));
+    if (isset($state[$key]) && ($now - (int)$state[$key]) < $cooldown) {
+        $skipped++;
+        continue;
+    }
+    $state[$key] = $now;
+    $emit[] = ['kind' => $kind, 'level' => (string)($ins['level'] ?? 'info'), 'text' => $text];
+}
+
+// prune old keys so the state file cannot grow forever
+foreach ($state as $k => $ts) {
+    if (($now - (int)$ts) > 30 * 86400) {
+        unset($state[$k]);
+    }
+}
+
+if (!$emit) {
+    if ($verbose) {
+        fwrite(STDOUT, sprintf(
+            "nothing new (%d suppressed by cooldown), window %s→%s, %d queries\n",
+            $skipped,
+            $data['dns']['window_from'],
+            $data['dns']['window_to'],
+            $data['dns']['queries']
+        ));
+    }
+    exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// delivery
+// ---------------------------------------------------------------------------
+$stamp = date('Y-m-d H:i:s');
+$head = sprintf(
+    '【KixDNS×appdpi】%d 条新发现 · 窗口 %s→%s · %d 次查询 / %d 台设备 / %d 域名',
+    count($emit),
+    $data['dns']['window_from'],
+    $data['dns']['window_to'],
+    $data['dns']['queries'],
+    $data['dns']['clients'],
+    $data['dns']['unique_domains']
+);
+$body = $head . "\n";
+foreach ($emit as $e) {
+    $body .= sprintf("[%s] %s\n", $e['kind'], $e['text']);
+}
+
+if ($dry) {
+    fwrite(STDOUT, $body);
+} else {
+    @file_put_contents($LOG, $stamp . ' ' . str_replace("\n", ' | ', $body) . "\n", FILE_APPEND);
+    $plain = str_replace(["\n", '"', '`', '$'], [' / ', "'", "'", ''], $body);
+    @exec('/usr/bin/logger -t kixdns-fusion ' . escapeshellarg($plain));
+    if ($verbose) {
+        fwrite(STDOUT, $body);
+    }
+}
+
+if (!empty($conf['webhook_url'])) {
+    $url = (string)$conf['webhook_url'];
+    if (($conf['webhook_format'] ?? 'json') === 'text') {
+        $payload = $head . "\n" . implode("\n", array_map(function ($e) {
+            return '[' . $e['kind'] . '] ' . $e['text'];
+        }, $emit));
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: text/plain; charset=utf-8\r\n",
+            'content' => $payload,
+            'timeout' => 8,
+            'ignore_errors' => true,
+        ]]);
+    } else {
+        $payload = json_encode([
+            'title' => 'KixDNS × appdpi',
+            'text' => $body,
+            'window' => [
+                'from' => $data['dns']['window_from'],
+                'to' => $data['dns']['window_to'],
+                'queries' => $data['dns']['queries'],
+                'clients' => $data['dns']['clients'],
+            ],
+            'findings' => $emit,
+        ], JSON_UNESCAPED_UNICODE);
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/json; charset=utf-8\r\n",
+            'content' => $payload,
+            'timeout' => 8,
+            'ignore_errors' => true,
+        ]]);
+    }
+    $resp = @file_get_contents($url, false, $ctx);
+    if ($dry) {
+        fwrite(STDOUT, sprintf("\nwebhook: %s => %s\n", $url, $resp === false ? 'failed' : 'sent'));
+    }
+}
+
+if (!$dry) {
+    @file_put_contents($STATE, json_encode($state), LOCK_EX);
+    if ($verbose) {
+        fwrite(STDOUT, $body);
+    }
+}
+exit(0);

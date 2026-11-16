@@ -45,7 +45,7 @@ class FusionController extends ApiControllerBase
     private const MAX_BYTES   = 268435456; // 256 MiB hard cap
     private const MIN_BYTES   = 524288;    // 512 KiB floor
 
-    private const SCAN_SCHEMA = 4;         // bump when the scan shape changes
+    private const SCAN_SCHEMA = 6;         // bump when the scan shape changes
     /**
      * Only clients inside these segments are counted. The engine sits on a
      * multi-segment LAN (2/3/4/5/6/30/40/50/172.30), but the operator only wants
@@ -333,7 +333,7 @@ class FusionController extends ApiControllerBase
             $raw = (string)@file_get_contents(self::IDX_CACHE);
             $c = json_decode($raw, true);
             if (is_array($c) && ($c['mtime'] ?? 0) === $mtime && ($c['size'] ?? 0) === $size
-                && (int)($c['idxver'] ?? 0) === 2 && isset($c['suffix'])
+                && (int)($c['idxver'] ?? 0) === 3 && isset($c['suffix'])
                 && (time() - (int)($c['built'] ?? 0)) < self::IDX_TTL) {
                 return $c + $blank;
             }
@@ -374,6 +374,13 @@ class FusionController extends ApiControllerBase
                 }
                 $type = strtolower($f[1]);
                 if ($type !== 'domain' && $type !== 'host' && $type !== 'cn') {
+                    continue;
+                }
+                // status is the last-ish column: active | duplicate | unmapped.
+                // "unmapped" means the rule's app_id could not be resolved, so
+                // using it would invent an attribution (554 such rows in r10).
+                $status = strtolower(trim($f[10] ?? ''));
+                if ($status !== '' && $status !== 'active') {
                     continue;
                 }
                 $appId = (int)$f[4];
@@ -418,7 +425,7 @@ class FusionController extends ApiControllerBase
         fclose($fh);
 
         $out = [
-            'idxver' => 2,
+            'idxver' => 3,
             'apps' => $apps,
             'suffix' => $suffix,
             'loose' => $loose,
@@ -1163,15 +1170,12 @@ class FusionController extends ApiControllerBase
             }
             $q = (int)$d['dns_queries'];
             $label = $d['ip'] . ($d['hostname'] !== '' ? ' (' . $d['hostname'] . ')' : '');
-            if ($q === 0) {
-                $out[] = [
-                    'level' => 'info', 'kind' => 'dns-less',
-                    'text' => $label . ' 窗口内流量 ' . $this->humanBytes($bytes)
-                        . ' 但一次都没向本解析器查询 — 跨网段、自带 DNS，或完全不依赖本机解析',
-                ];
-                continue;
-            }
-            if ($q <= 3) {
+            // "0 queries but megabytes of traffic" was dropped on purpose: on a
+            // multi-segment LAN it fires for every device that simply resolves
+            // elsewhere, which buried the findings that matter. So this branch
+            // requires at least one query: it is about clients that DID ask us
+            // and then abandoned the resolver.
+            if ($q >= 1 && $q <= 3) {
                 $out[] = [
                     'level' => 'warn', 'kind' => 'doh',
                     'text' => $label . ' 窗口内流量 ' . $this->humanBytes($bytes) . '，DNS 查询仅 '
@@ -1211,21 +1215,9 @@ class FusionController extends ApiControllerBase
             ];
         }
 
-        // 4. appdpi observed names the resolver never logged -> bypass
-        $missing = [];
-        foreach ($dpi['domains'] as $dom => $r) {
-            if ((int)$r['hits'] >= 3 && !isset($scan['domains'][$dom])) {
-                $missing[] = (string)$dom;
-            }
-        }
-        if ($missing) {
-            $out[] = [
-                'level' => 'info', 'kind' => 'bypass',
-                'text' => count($missing) . ' 个 appdpi 观察到的域名在本窗口内没有任何 DNS 查询（如 '
-                    . implode(', ', array_slice($missing, 0, 3))
-                    . '）— 可能用 DoH/DoT 自行解析，或只是 TTL 较长',
-            ];
-        }
+        // 4. (removed) "N appdpi-observed names had no DNS query in this window".
+        //    Every long-TTL CDN name and every DoH client lands here, so it was
+        //    a count with no action attached — noise next to the real findings.
 
         // 5. one device hammering one name: heartbeat, probe, or a hijacked client.
         // Collapsed into a single line — an IoT-heavy LAN otherwise produces one

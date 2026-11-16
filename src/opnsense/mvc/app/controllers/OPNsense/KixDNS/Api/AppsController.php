@@ -399,6 +399,34 @@ class AppsController extends ApiControllerBase
     }
 
     /* ------------------------------------------------------------------ */
+    /* GET /api/kixdns/apps/rules?app=878 — the engine's own rule dump      */
+    /* ------------------------------------------------------------------ */
+    /**
+     * appdpi >= 1.0.3 can print the rules behind an app id (`appdpi rules
+     * --app N`). The page cannot read the 977 KB rulepack itself, and this is
+     * the engine's own view of the criteria — so ask it instead.
+     */
+    public function rulesAction()
+    {
+        $id = (int)$this->request->getQuery('app', 'int', 0);
+        if ($id <= 0) {
+            return ['result' => 'failed', 'message' => 'app id required'];
+        }
+        $pack = is_readable(self::RULEPACK) ? self::RULEPACK : '';
+        $cmd = '/usr/local/bin/appdpi rules --app ' . $id;
+        if ($pack !== '') {
+            $cmd .= ' --rulepack ' . escapeshellarg($pack);
+        }
+        $out = (string)@shell_exec($cmd . ' 2>&1');
+        return [
+            'result' => 'ok',
+            'app_id' => $id,
+            'lines' => substr_count($out, "[rules]"),
+            'text' => $out,
+        ];
+    }
+
+    /* ------------------------------------------------------------------ */
     /* POST /api/kixdns/apps/unblock   apps=878,2121                       */
     /* ------------------------------------------------------------------ */
     /**

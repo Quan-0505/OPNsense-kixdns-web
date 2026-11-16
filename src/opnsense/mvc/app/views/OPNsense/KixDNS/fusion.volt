@@ -216,6 +216,16 @@
 
     <div class="fx-panel">
         <div class="fx-panel-head">
+            <span><i class="fa fa-list-alt"></i> 应用判据原文</span>
+            <span class="fx-muted">点应用行里的「判据」按钮，这里是引擎自己从特征库翻出来的规则</span>
+        </div>
+        <div class="fx-panel-body">
+            <pre id="fx-rules-out" style="max-height:280px;overflow:auto;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px;color:#4a5568;margin:0;">点击上面应用表里的「判据」查看</pre>
+        </div>
+    </div>
+
+    <div class="fx-panel">
+        <div class="fx-panel-head">
             <span><i class="fa fa-bell-o"></i> 异常告警（cron 每 10 分钟）</span>
             <span class="fx-muted">同一类发现在 6 小时内不重复报</span>
         </div>
@@ -409,7 +419,9 @@
             }
             return '<tr>'
                 + '<td><span class="fx-tag app">' + esc(x.name) + '</span>'
-                + '<span class="fx-muted"> #' + x.app_id + '</span></td>'
+                + '<span class="fx-muted"> #' + x.app_id + '</span>'
+                + ' <a href="#" class="fx-rules" data-app="' + x.app_id + '" data-name="' + esc(x.name) + '"'
+                + ' style="font-size:11px;">判据</a></td>'
                 + '<td class="num">' + (x.bytes ? hbytes(x.bytes) : '<span class="fx-muted">-</span>')
                 + '<div><span class="fx-bar g" style="width:' + Math.max(2, Math.round(70 * x.bytes / maxA)) + 'px"></span></div></td>'
                 + '<td class="num">' + num(x.flows) + '</td>'
@@ -543,6 +555,18 @@
         }).fail(function (xhr) { out.textContent = '接口失败 ' + xhr.status; });
     }
 
+    // ---- rule dump for one app ----------------------------------------
+    function loadRules(appId, name) {
+        var out = document.getElementById('fx-rules-out');
+        out.textContent = '读取 ' + name + ' 的判据…';
+        $.getJSON('/api/kixdns/apps/rules', { app: appId }).done(function (d) {
+            if (d.result !== 'ok') { out.textContent = '失败：' + (d.message || '?'); return; }
+            out.textContent = '应用 #' + appId + ' ' + name + ' — 共 ' + d.lines + ' 条判据\n\n' + d.text;
+        }).fail(function (xhr) {
+            out.textContent = '接口失败 ' + xhr.status;
+        });
+    }
+
     function load() {
         var bytes = document.getElementById('fx-window').value || '16777216';
         var btn = document.getElementById('fx-refresh');
@@ -590,6 +614,11 @@
         });
         document.getElementById('fx-feed-run').addEventListener('click', runFeed);
         document.getElementById('fx-alert-test').addEventListener('click', runAlertTest);
+        $(document).on('click', '.fx-rules', function (e) {
+            e.preventDefault();
+            loadRules(this.getAttribute('data-app'), this.getAttribute('data-name') || '');
+            document.getElementById('fx-rules-out').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
     });
 })();
 </script>

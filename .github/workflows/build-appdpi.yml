@@ -224,7 +224,7 @@ jobs:
           int bpf_load_if_needed(const char *obj, char *err, size_t cap)
           { (void)obj; (void)err; (void)cap; return -1; }
           STUB
-          clang --target=$TARGET --sysroot=$SYSROOT -I../src -c bpf_load_stub.c -o ../obj/zz_bpf_stub.o
+          clang --target=$TARGET --sysroot=$SYSROOT -Isrc -c bpf_load_stub.c -o ../obj/zz_bpf_stub.o
           clang --target=$TARGET --sysroot=$SYSROOT -fuse-ld=lld \
             -o appdpi ../obj/*.o "$PCAP" $EXTRA
 

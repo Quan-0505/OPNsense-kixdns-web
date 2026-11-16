@@ -105,6 +105,7 @@ jobs:
       - name: FreeBSD adaptation for the Linux-only MAC lookup
         run: |
           set -eu
+          cd appdpi-src
           python3 - <<'PY'
           import re, pathlib, sys
           p = pathlib.Path('src/main.c')

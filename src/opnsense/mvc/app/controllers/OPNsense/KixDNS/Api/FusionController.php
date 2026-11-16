@@ -130,11 +130,25 @@ class FusionController extends ApiControllerBase
         $appRows = [];
         foreach ($dpi['apps'] as $appId => $rec) {
             $dnsRec = $dnsApp[$appId] ?? null;
+            $ad = $dpi['app_detail'][$appId] ?? null;
             $appRows[] = [
                 'app_id' => $appId,
                 'name' => $rec['name'] !== '' ? $rec['name'] : $this->appName($appId, $index, $dpi),
                 'flows' => $rec['flows'],
                 'bytes' => $rec['bytes'],
+                // live rate + drill-down, when the engine publishes app_detail
+                'bps_up' => $ad['bps_up'] ?? 0,
+                'bps_down' => $ad['bps_down'] ?? 0,
+                'users' => $ad !== null
+                    ? array_slice(array_map(function ($u) {
+                        return $u['ip'];
+                    }, $ad['users']), 0, 8)
+                    : [],
+                'peers' => $ad !== null
+                    ? array_slice(array_map(function ($p) {
+                        return $p['peer'];
+                    }, $ad['peers']), 0, 6)
+                    : [],
                 'dns_queries' => $dnsRec !== null ? $dnsRec['queries'] : 0,
                 'dns_domains' => $dnsRec !== null ? $dnsRec['domains'] : 0,
                 'top_domains' => $dnsRec !== null ? $this->topList($dnsRec['top'], 3) : [],
@@ -475,6 +489,7 @@ class FusionController extends ApiControllerBase
         $out = [
             'ok' => false, 'age' => null, 'meta' => [],
             'devices' => [], 'apps' => [], 'dev_apps' => [], 'domains' => [],
+            'app_detail' => [],
             'bps_in' => 0, 'bps_out' => 0, 'mac' => [], 'names' => [],
             'v4' => 0, 'v6' => 0, 'unique_macs' => 0,
         ];
@@ -551,6 +566,41 @@ class FusionController extends ApiControllerBase
                 'app_id' => (int)($r['app_id'] ?? 0),
                 'hits' => (int)($r['hits'] ?? 0),
                 'bytes' => (int)($r['bytes'] ?? 0),
+            ];
+        }
+        // appdpi >= 1.0.2 aggregates per app: who uses it, which names, which
+        // peers, plus live rates. Unlike flows/peers this is not cut by --top.
+        // Only apps that made it into apps[] carry a detail record.
+        foreach ($j['app_detail'] ?? [] as $row) {
+            $id = (int)($row['app_id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+            $out['app_detail'][$id] = [
+                'bytes' => (int)($row['bytes'] ?? 0),
+                'flows' => (int)($row['flows'] ?? 0),
+                'bps_up' => (int)($row['bps_up'] ?? 0),
+                'bps_down' => (int)($row['bps_down'] ?? 0),
+                'last' => (int)($row['last'] ?? 0),
+                'users' => array_values(array_map(function ($u) {
+                    return [
+                        'ip' => (string)($u['ip'] ?? ''),
+                        'bytes' => (int)($u['bytes'] ?? 0),
+                        'flows' => (int)($u['flows'] ?? 0),
+                    ];
+                }, is_array($row['users'] ?? null) ? $row['users'] : [])),
+                'domains' => array_values(array_map(function ($d) {
+                    return [
+                        'domain' => (string)($d['domain'] ?? ''),
+                        'bytes' => (int)($d['bytes'] ?? 0),
+                    ];
+                }, is_array($row['domains'] ?? null) ? $row['domains'] : [])),
+                'peers' => array_values(array_map(function ($p) {
+                    return [
+                        'peer' => (string)($p['peer'] ?? ''),
+                        'bytes' => (int)($p['bytes'] ?? 0),
+                    ];
+                }, is_array($row['peers'] ?? null) ? $row['peers'] : [])),
             ];
         }
         // dhcp lease + arp as a hostname fallback for IPs the engine saw only

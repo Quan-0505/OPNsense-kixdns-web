@@ -74,6 +74,28 @@ function say(string $s): void
     }
 }
 
+/**
+ * Never block the LAN itself. The engine can attribute a flow to the app we are
+ * blocking while its peer is an internal address (a request served by the
+ * firewall, a local DNS forwarder, the gateway itself). Putting that address in
+ * the table takes the whole LAN down — observed: 192.168.5.1 in the table, every
+ * packet to the gateway dropped, "internet is gone" within a minute.
+ */
+function isPrivateIp(string $ip): bool
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return true;
+    }
+    $long = ip2long($ip);
+    foreach ([['192.168.0.0', 16], ['10.0.0.0', 8], ['172.16.0.0', 12],
+              ['127.0.0.0', 8], ['169.254.0.0', 16], ['0.0.0.0', 8]] as $c) {
+        $mask = $c[1] === 0 ? 0 : (-1 << (32 - $c[1]));
+        if (($long & $mask) === (ip2long($c[0]) & $mask)) {
+            return true;
+        }
+    }
+    return false;
+}
 // ---------------------------------------------------------------------------
 // 1. who is talking to the apps we care about
 // ---------------------------------------------------------------------------
@@ -97,6 +119,9 @@ foreach (($j['peers'] ?? []) as $p) {
     if ($ip === '' || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
         continue;   // pf table here is v4 only; v6 would need its own table
     }
+    if (isPrivateIp($ip)) {
+        continue;   // never blackhole the LAN (gateway, local forwarders, ...)
+    }
     $bytes = (int)($p['in_bytes'] ?? 0) + (int)($p['out_bytes'] ?? 0);
     if (!isset($peerHit[$ip])) {
         $peerHit[$ip] = ['app' => $app, 'flows' => 0, 'bytes' => 0];
@@ -114,6 +139,9 @@ foreach (($j['flows'] ?? []) as $f) {
     if ($ip === '' || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
         continue;
     }
+    if (isPrivateIp($ip)) {
+        continue;   // same guard on the flow table
+    }
     if (!isset($peerHit[$ip])) {
         $peerHit[$ip] = ['app' => $app, 'flows' => 0, 'bytes' => 0];
     }
@@ -124,7 +152,25 @@ foreach (($j['flows'] ?? []) as $f) {
 uksort($peerHit, function ($a, $b) use ($peerHit) {
     return $peerHit[$b]['bytes'] <=> $peerHit[$a]['bytes'];
 });
-$want = array_slice(array_keys($peerHit), 0, max(1, (int)$conf['max_ips']));
+// Remember peers for a while instead of mirroring "whatever is active now":
+// the engine drops a peer as soon as the flow ages out, and a table that empties
+// the moment the app goes idle gives the next launch a free connection (which is
+// exactly how a blocked app keeps working). Each IP is kept for keep_s seconds
+// after it was last seen.
+$keep_s = max(60, (int)($conf['keep_s'] ?? 300));
+$state = is_readable($GLOBALS['STATE'])
+    ? (array)(json_decode((string)@file_get_contents($GLOBALS['STATE']), true)['ips'] ?? [])
+    : [];
+$now = time();
+foreach ($peerHit as $ip => $rec) {
+    $state[$ip] = $now;
+}
+foreach ($state as $ip => $ts) {
+    if (($now - (int)$ts) > $keep_s || isPrivateIp((string)$ip)) {
+        unset($state[$ip]);
+    }
+}
+$want = array_slice(array_keys($state), 0, max(1, (int)$conf['max_ips']));
 
 // ---------------------------------------------------------------------------
 // 2. what is in the table right now
@@ -190,6 +236,24 @@ if ($del) {
     }
 }
 
+// A block rule only affects new connections: pf keeps the state of anything
+// already established, so an app with an open session would keep working after
+// its peer lands in the table (observed: table had 5 Bilibili peers, the app
+// still played). Kill the states for every IP we just started blocking.
+if ($add) {
+    $kills = [];
+    foreach ($add as $ip) {
+        $kills[] = '-k ' . escapeshellarg($ip);
+    }
+    if ($kills) {
+        exec('/sbin/pfctl -q ' . implode(' ', $kills) . ' 2>&1', $o3, $rc3);
+        say('killed states for ' . count($kills) . ' peer(s)');
+        if ($rc3 !== 0) {
+            fwrite(STDERR, "pfctl -k failed ($rc3): " . implode(' ', $o3) . "\n");
+        }
+    }
+}
+
 if ($add || $del) {
     @file_put_contents(
         $GLOBALS['LOG'],
@@ -207,6 +271,7 @@ if ($add || $del) {
     'ts' => time(),
     'apps' => $apps,
     'table' => $table,
+    'ips' => $state,
     'blocked' => array_values($want),
 ], JSON_UNESCAPED_SLASHES), LOCK_EX);
 

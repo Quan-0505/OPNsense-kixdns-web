@@ -399,6 +399,100 @@ class AppsController extends ApiControllerBase
     }
 
     /* ------------------------------------------------------------------ */
+    /* POST /api/kixdns/apps/unblock   apps=878,2121                       */
+    /* ------------------------------------------------------------------ */
+    /**
+     * Remove the block rules for the given app ids. The UI previously only knew
+     * how to write rules (overwriting whatever was there), so once an app was
+     * blocked there was no way back from the page — this is that way back.
+     */
+    public function unblockAction()
+    {
+        if (!$this->request->isPost()) {
+            return ['result' => 'failed', 'message' => 'POST required'];
+        }
+        $raw = (string)$this->request->getPost('apps', 'string', '');
+        $ids = [];
+        foreach (explode(',', $raw) as $p) {
+            $p = trim($p);
+            if ($p !== '' && ctype_digit($p) && (int)$p > 0) {
+                $ids[] = (int)$p;
+            }
+        }
+        if (!$ids) {
+            return ['result' => 'failed', 'message' => 'no app ids given'];
+        }
+        $doc = $this->pipelineDoc();
+        if ($doc === null) {
+            return ['result' => 'failed', 'message' => 'cannot read the current pipeline JSON'];
+        }
+        $removed = [];
+        foreach ($doc['pipelines'] as &$pl) {
+            if (!isset($pl['rules']) || !is_array($pl['rules'])) {
+                continue;
+            }
+            $keep = [];
+            foreach ($pl['rules'] as $r) {
+                $name = (string)($r['name'] ?? '');
+                if (strpos($name, self::BLOCK_PREFIX) !== 0) {
+                    $keep[] = $r;
+                    continue;
+                }
+                $hit = false;
+                foreach ($ids as $id) {
+                    if (strpos($name, '(#' . $id . ')') !== false) {
+                        $hit = true;
+                        break;
+                    }
+                }
+                if ($hit) {
+                    $removed[] = $name;
+                    continue;
+                }
+                $keep[] = $r;
+            }
+            $pl['rules'] = $keep;
+        }
+        unset($pl);
+        if (!$removed) {
+            return ['result' => 'ok', 'removed' => 0, 'message' => 'these apps are not blocked'];
+        }
+        $json = json_encode($doc, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        if ($json === false) {
+            return ['result' => 'failed', 'message' => 'cannot encode pipeline JSON'];
+        }
+        $errors = ConfigValidator::validate($json);
+        if ($errors) {
+            return ['result' => 'failed', 'message' => implode(' ', $errors)];
+        }
+        $prev = (string)(new KixDNS())->general->config_json;
+        if ($prev !== '') {
+            @file_put_contents(self::BACKUP, $prev);
+        }
+        try {
+            Config::getInstance()->lock();
+            $mdl = new KixDNS();
+            $mdl->general->config_json = $json;
+            $validation = $mdl->performValidation();
+            if ($validation->count() > 0) {
+                $msgs = [];
+                foreach ($validation as $msg) {
+                    $msgs[] = $msg->getField() . ': ' . $msg->getMessage();
+                }
+                return ['result' => 'failed', 'message' => implode(' ', $msgs)];
+            }
+            $mdl->serializeToConfig(false, true);
+            Config::getInstance()->save();
+        } catch (\Throwable $e) {
+            return ['result' => 'failed', 'message' => $e->getMessage()];
+        }
+        $backend = new Backend();
+        $backend->configdRun('template reload OPNsense/KixDNS');
+        $backend->configdRun('kixdns reload');
+        return ['result' => 'applied', 'removed' => count($removed), 'rules' => $removed];
+    }
+
+    /* ------------------------------------------------------------------ */
     /* POST /api/kixdns/apps/alerttest — dry-run the cron alert checker     */
     /* ------------------------------------------------------------------ */
     public function alerttestAction()

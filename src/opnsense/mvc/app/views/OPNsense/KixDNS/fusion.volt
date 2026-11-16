@@ -145,12 +145,14 @@
         <div class="fx-panel-body tight">
             <table class="fx-table" id="fx-app-table">
                 <colgroup>
-                    <col style="width:20%"><col style="width:14%"><col style="width:10%">
-                    <col style="width:10%"><col style="width:10%"><col style="width:36%">
+                    <col style="width:18%"><col style="width:12%"><col style="width:9%">
+                    <col style="width:9%"><col style="width:9%"><col style="width:9%">
+                    <col style="width:34%">
                 </colgroup>
                 <thead><tr>
                     <th>应用</th><th class="num">流量</th><th class="num">连接</th>
-                    <th class="num">DNS 查询</th><th class="num">域名数</th><th>域名样本</th>
+                    <th class="num">DNS 查询</th><th class="num">域名数</th>
+                    <th class="num">在用设备/对端</th><th>域名样本</th>
                 </tr></thead>
                 <tbody><tr><td colspan="6" class="fx-muted">…</td></tr></tbody>
             </table>
@@ -179,6 +181,7 @@
                 </select>
                 <button id="fx-block-preview" class="btn btn-default btn-sm"><i class="fa fa-eye"></i> 预览规则</button>
                 <button id="fx-block-apply" class="btn btn-danger btn-sm"><i class="fa fa-shield"></i> 写入并重载 kixdns</button>
+                <button id="fx-block-unblock" class="btn btn-success btn-sm"><i class="fa fa-unlock"></i> 解除封堵</button>
                 <span class="fx-chip" id="fx-block-state">…</span>
             </div>
             <div id="fx-block-out" class="fx-muted" style="margin-bottom:8px;">勾选应用后先预览，确认无误再写入</div>
@@ -392,6 +395,18 @@
             var samples = (x.top_domains || []).map(function (t) {
                 return '<span class="fx-tag rule">' + esc(t.q) + '</span>';
             }).join(' ') || '<span class="fx-muted">-</span>';
+            var drill = '';
+            if ((x.users || []).length || (x.peers || []).length) {
+                drill = '<span title="在用设备：' + esc((x.users || []).join(', '))
+                    + '\n对端：' + esc((x.peers || []).join(', ')) + '">'
+                    + '<span class="fx-tag dpi">' + (x.users || []).length + ' 台</span> '
+                    + '<span class="fx-tag rule">' + (x.peers || []).length + ' 对端</span></span>';
+                if (x.bps_down > 0 || x.bps_up > 0) {
+                    drill += '<div class="fx-muted">↓' + hbps(x.bps_down) + ' ↑' + hbps(x.bps_up) + '</div>';
+                }
+            } else {
+                drill = '<span class="fx-muted">-</span>';
+            }
             return '<tr>'
                 + '<td><span class="fx-tag app">' + esc(x.name) + '</span>'
                 + '<span class="fx-muted"> #' + x.app_id + '</span></td>'
@@ -400,6 +415,7 @@
                 + '<td class="num">' + num(x.flows) + '</td>'
                 + '<td class="num">' + num(x.dns_queries) + '</td>'
                 + '<td class="num">' + num(x.dns_domains) + '</td>'
+                + '<td class="num">' + drill + '</td>'
                 + '<td>' + samples + '</td>'
                 + '</tr>';
         }).join('');
@@ -511,6 +527,22 @@
         }).fail(function (xhr) { out.textContent = '接口失败 ' + xhr.status; });
     }
 
+    // ---- unblock -------------------------------------------------------
+    function doUnblock() {
+        var ids = picked();
+        var out = document.getElementById('fx-block-out');
+        if (!ids) { out.textContent = '先勾选要解封的应用'; return; }
+        if (!window.confirm('解除勾选应用的 DNS 封堵？会重启 kixdns（约 1 秒）。')) { return; }
+        out.textContent = '解封中…';
+        postJ('/api/kixdns/apps/unblock', { apps: ids }).done(function (d) {
+            if (d.result === 'failed') { out.textContent = '失败：' + d.message; return; }
+            out.innerHTML = d.removed
+                ? '<span class="fx-tag ok">已解封 ' + d.removed + ' 条规则</span> ' + esc((d.rules || []).join(' / '))
+                : '<span class="fx-tag warn">' + esc(d.message || '这些应用没有封堵规则') + '</span>';
+            loadApps();
+        }).fail(function (xhr) { out.textContent = '接口失败 ' + xhr.status; });
+    }
+
     function load() {
         var bytes = document.getElementById('fx-window').value || '16777216';
         var btn = document.getElementById('fx-refresh');
@@ -551,6 +583,7 @@
                 doBlock('apply');
             }
         });
+        document.getElementById('fx-block-unblock').addEventListener('click', doUnblock);
         document.getElementById('fx-apps-all').addEventListener('change', function () {
             var on = this.checked;
             $('.fx-app-pick').each(function () { this.checked = on; });

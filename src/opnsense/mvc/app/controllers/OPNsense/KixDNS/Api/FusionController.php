@@ -45,7 +45,7 @@ class FusionController extends ApiControllerBase
     private const MAX_BYTES   = 268435456; // 256 MiB hard cap
     private const MIN_BYTES   = 524288;    // 512 KiB floor
 
-    private const SCAN_SCHEMA = 3;         // bump when the scan shape changes
+    private const SCAN_SCHEMA = 4;         // bump when the scan shape changes
     /**
      * Only clients inside these segments are counted. The engine sits on a
      * multi-segment LAN (2/3/4/5/6/30/40/50/172.30), but the operator only wants
@@ -87,7 +87,7 @@ class FusionController extends ApiControllerBase
         $dnsApp = [];          // app_id => ['queries'=>int,'domains'=>hash,'top'=>[]]
         $domainRows = [];
         $conflicts = [];       // appdpi says unknown, the rulepack disagrees
-        $srcMix = ['dpi' => 0, 'rule' => 0, 'loose' => 0, 'none' => 0];
+        $srcMix = ['dpi' => 0, 'rule' => 0, 'loose' => 0, 'flow' => 0, 'seen' => 0, 'none' => 0];
 
         // --- domain table: kixdns query volume joined with appdpi observation --
         foreach ($scan['domains'] as $qname => $rec) {
@@ -194,7 +194,11 @@ class FusionController extends ApiControllerBase
                     $topDomains[] = [
                         'q' => (string)$q,
                         'n' => $n,
-                        'app' => $this->appName($hit['app_id'], $index, $dpi),
+                        // 'seen' is not ownership: leave the label empty so the
+                        // device row does not claim api.github.com is 腾讯
+                        'app' => $hit['src'] === 'seen'
+                            ? '' : $this->appName($hit['app_id'], $index, $dpi),
+                        'src' => $hit['src'],
                     ];
                 }
             }
@@ -329,7 +333,8 @@ class FusionController extends ApiControllerBase
             $raw = (string)@file_get_contents(self::IDX_CACHE);
             $c = json_decode($raw, true);
             if (is_array($c) && ($c['mtime'] ?? 0) === $mtime && ($c['size'] ?? 0) === $size
-                && isset($c['suffix']) && (time() - (int)($c['built'] ?? 0)) < self::IDX_TTL) {
+                && (int)($c['idxver'] ?? 0) === 2 && isset($c['suffix'])
+                && (time() - (int)($c['built'] ?? 0)) < self::IDX_TTL) {
                 return $c + $blank;
             }
         }
@@ -391,11 +396,29 @@ class FusionController extends ApiControllerBase
                         $loose[$pat] = $appId;
                     }
                 }
+            } elseif ($section === 'subkeys') {
+                // subkey_id main_domain main_app pattern app_id match segment
+                // main_app is 0 by design ("the domain alone means nothing"), the
+                // real owner sits in column 5. Without this branch `i0.hdslb.com`
+                // had no rule at all, because hdslb.com only lives here.
+                $f = explode("\t", $line);
+                if (count($f) < 5) {
+                    continue;
+                }
+                $appId = (int)$f[4];
+                $key = ltrim(strtolower(trim($f[1])), '.');
+                if ($appId <= 0 || $key === '' || strpos($key, '.') === false) {
+                    continue;
+                }
+                if (strlen($key) >= self::MIN_SUFFIX && !isset($suffix[$key])) {
+                    $suffix[$key] = $appId;
+                }
             }
         }
         fclose($fh);
 
         $out = [
+            'idxver' => 2,
             'apps' => $apps,
             'suffix' => $suffix,
             'loose' => $loose,
@@ -424,6 +447,22 @@ class FusionController extends ApiControllerBase
      *   rule_app_id what the suffix table alone would have said
      *   conflict    true when appdpi says unknown but the rulepack disagrees
      */
+    /**
+     * Domain -> app, with the precedence fixed after the 2121/2131 confusion:
+     *
+     * 1. **rulepack** ([rules] + [subkeys]) — this is the ownership *definition*.
+     *    "i0.hdslb.com belongs to Bilibili" is a rule, not an observation.
+     * 2. **flows[]** — the engine actually identified a connection carrying this
+     *    name. Second best: it is evidence, not a definition, but it comes from a
+     *    real five-tuple rather than from a DNS packet.
+     * 3. **domains[]** — last resort, and NOT ownership: that table records
+     *    "which app's traffic this name appeared in". A Xiaomi phone resolving
+     *    api.github.com puts api.github.com under 2121 there, which is how the
+     *    page ended up labelling GitHub as 小米. Shown as `seen` and rendered with
+     *    a question mark so it cannot be mistaken for an attribution.
+     *
+     *   app_id / src (rule|loose|flow|seen|none) / rule_app_id / conflict
+     */
     private function classifyDomain(string $qname, array $index, array $dpi): array
     {
         $d = strtolower(rtrim(trim($qname), '.'));
@@ -431,23 +470,27 @@ class FusionController extends ApiControllerBase
             return ['app_id' => 0, 'src' => 'none', 'rule_app_id' => 0, 'conflict' => false];
         }
         list($ruleId, $ruleSrc) = $this->ruleAppId($d, $index);
-
-        if (isset($dpi['domains'][$d])) {
-            $dpiId = (int)$dpi['domains'][$d]['app_id'];
-            return [
-                'app_id' => $dpiId,
-                'src' => 'dpi',
-                'rule_app_id' => $ruleId,
-                'conflict' => ($dpiId === 0 && $ruleId > 0),
-            ];
-        }
         if ($ruleId > 0) {
+            return ['app_id' => $ruleId, 'src' => $ruleSrc, 'rule_app_id' => $ruleId, 'conflict' => false];
+        }
+        if (isset($dpi['flow_domain'][$d]) && (int)$dpi['flow_domain'][$d] > 0) {
             return [
-                'app_id' => $ruleId,
-                'src' => $ruleSrc,
-                'rule_app_id' => $ruleId,
+                'app_id' => (int)$dpi['flow_domain'][$d],
+                'src' => 'flow',
+                'rule_app_id' => 0,
                 'conflict' => false,
             ];
+        }
+        if (isset($dpi['domains'][$d])) {
+            $seenId = (int)$dpi['domains'][$d]['app_id'];
+            if ($seenId > 0) {
+                return [
+                    'app_id' => $seenId,
+                    'src' => 'seen',
+                    'rule_app_id' => 0,
+                    'conflict' => false,
+                ];
+            }
         }
         return ['app_id' => 0, 'src' => 'none', 'rule_app_id' => 0, 'conflict' => false];
     }
@@ -489,7 +532,7 @@ class FusionController extends ApiControllerBase
         $out = [
             'ok' => false, 'age' => null, 'meta' => [],
             'devices' => [], 'apps' => [], 'dev_apps' => [], 'domains' => [],
-            'app_detail' => [],
+            'app_detail' => [], 'flow_domain' => [], 'flow_domain_bytes' => [],
             'bps_in' => 0, 'bps_out' => 0, 'mac' => [], 'names' => [],
             'v4' => 0, 'v6' => 0, 'unique_macs' => 0,
         ];
@@ -567,6 +610,21 @@ class FusionController extends ApiControllerBase
                 'hits' => (int)($r['hits'] ?? 0),
                 'bytes' => (int)($r['bytes'] ?? 0),
             ];
+        }
+        // Evidence tier: a name that appears on an identified flow (five-tuple),
+        // as opposed to domains[] which only says "this name showed up in that
+        // app's traffic". Keep the heaviest flow per name.
+        foreach ($j['flows'] ?? [] as $f) {
+            $dom = strtolower((string)($f['domain'] ?? ''));
+            $app = (int)($f['app_id'] ?? 0);
+            if ($dom === '' || $app <= 0) {
+                continue;
+            }
+            $bytes = (int)($f['bytes'] ?? 0);
+            if (!isset($out['flow_domain'][$dom]) || $bytes > ($out['flow_domain_bytes'][$dom] ?? 0)) {
+                $out['flow_domain'][$dom] = $app;
+                $out['flow_domain_bytes'][$dom] = $bytes;
+            }
         }
         // appdpi >= 1.0.2 aggregates per app: who uses it, which names, which
         // peers, plus live rates. Unlike flows/peers this is not cut by --top.

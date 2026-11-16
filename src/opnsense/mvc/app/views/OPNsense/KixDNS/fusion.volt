@@ -46,7 +46,7 @@
     .fx-tag.none { background:#fff5f5; color:#822727; }
     .fx-tag.warn { background:#fefcbf; color:#744210; }
     .fx-tag.err { background:#fed7d7; color:#822727; }
-    .fx-tag.ok { background:#c6f6d5; color:#22543d; }
+    .fx-tag.seen { background:#edf2f7; color:#a0aec0; }
     .fx-muted { color:#a0aec0; font-size:12px; }
     .fx-dom { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .fx-ins { border-left:3px solid #4299e1; background:#f7fafc; border-radius:4px;
@@ -353,7 +353,8 @@
             }).join('') || '<span class="fx-muted">-</span>';
             var appTag = x.top_app ? '<span class="fx-tag app">' + esc(x.top_app) + '</span>' : '<span class="fx-muted">-</span>';
             return '<tr>'
-                + '<td><strong>' + esc(x.ip) + '</strong>'
+                + '<td><strong><a href="/ui/appdpi#devices" title="在应用识别页看它的流量/应用/对端">'
+                + esc(x.ip) + '</a></strong>'
                 + (x.hostname ? '<div class="fx-muted">' + esc(x.hostname) + '</div>' : '') + '</td>'
                 + '<td class="mono">' + (x.mac ? esc(x.mac) : '<span class="fx-muted">-</span>') + '</td>'
                 + '<td class="num">' + hbps(x.in_bps) + '</td>'
@@ -374,12 +375,23 @@
         var maxD = 1;
         doms.forEach(function (x) { if (x.queries > maxD) { maxD = x.queries; } });
         var dhtml = doms.map(function (x) {
-            var srcTag = x.app
-                ? '<span class="fx-tag ' + esc(x.src) + '">' + esc(x.app) + '</span>'
-                : (x.conflict
-                    ? '<span class="fx-tag none" title="appdpi 判未识别；规则库判为 '
-                      + esc(x.rule_app) + '（以 appdpi 为准）">未识别 ⚠</span>'
-                    : '<span class="fx-tag none">未识别</span>');
+            var srcTag;
+            if (x.src === 'seen') {
+                // domains[] only says "this name appeared in that app's traffic";
+                // a Xiaomi phone resolving api.github.com must not turn into
+                // "api.github.com belongs to 小米"
+                srcTag = '<span class="fx-tag seen" title="引擎只记录该域名出现在「'
+                    + esc(x.app || '未知') + '」的流量里，这不是归属判断">未确认</span>';
+            } else if (x.app) {
+                srcTag = '<span class="fx-tag ' + esc(x.src) + '" title="来源：'
+                    + (x.src === 'rule' ? '特征库规则' : (x.src === 'flow' ? '真实连接识别' : '子串匹配'))
+                    + '">' + esc(x.app) + '</span>';
+            } else if (x.conflict) {
+                srcTag = '<span class="fx-tag none" title="规则库判为 '
+                    + esc(x.rule_app) + '（以引擎为准）">未识别 ⚠</span>';
+            } else {
+                srcTag = '<span class="fx-tag none">未识别</span>';
+            }
             var cons = (x.dpi_bytes > 0 && x.queries > 0)
                 ? '<span class="fx-tag ok">双引擎</span>'
                 : (x.queries > 0 ? '<span class="fx-tag warn">仅 DNS</span>' : '<span class="fx-tag">仅流量</span>');

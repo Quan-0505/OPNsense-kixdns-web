@@ -217,12 +217,30 @@ jobs:
 
           # FreeBSD stub for the Linux-only eBPF loader
           cat > bpf_load_stub.c <<'STUB'
+          /* FreeBSD has no eBPF classifier: every entry point reports "not
+           * supported". bpf_unload() returns 0 because "nothing is attached" is
+           * the truthful answer, and the callers treat 0 as success. */
           #include <stddef.h>
+          #include "appdpi.h"
           #include "bpf_load.h"
+
           int bpf_load(const char *obj, char *err, size_t cap)
-          { (void)obj; (void)err; (void)cap; return -1; }
+          { (void)obj; if (err && cap) err[0] = 0; return -1; }
           int bpf_load_if_needed(const char *obj, char *err, size_t cap)
-          { (void)obj; (void)err; (void)cap; return -1; }
+          { (void)obj; if (err && cap) err[0] = 0; return -1; }
+          int bpf_unload(void) { return 0; }
+          int bpf_prog_path(char *path, size_t cap) { (void)path; (void)cap; return -1; }
+          int bpf_map_update(const char *n, const struct appdpi_key *k, unsigned v)
+          { (void)n; (void)k; (void)v; return -1; }
+          int bpf_map_delete(const char *n, const struct appdpi_key *k)
+          { (void)n; (void)k; return -1; }
+          int bpf_map_lookup(const char *n, const struct appdpi_key *k, unsigned *v)
+          { (void)n; (void)k; (void)v; return -1; }
+          int bpf_map_clear(const char *n) { (void)n; return -1; }
+          int bpf_attach(const char *dev, char *err, size_t cap)
+          { (void)dev; if (err && cap) err[0] = 0; return -1; }
+          int bpf_detach(const char *dev, char *err, size_t cap)
+          { (void)dev; if (err && cap) err[0] = 0; return -1; }
           STUB
           clang --target=$TARGET --sysroot=$SYSROOT -Isrc -c bpf_load_stub.c -o ../obj/zz_bpf_stub.o
           clang --target=$TARGET --sysroot=$SYSROOT -fuse-ld=lld \
